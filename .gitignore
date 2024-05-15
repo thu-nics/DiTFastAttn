@@ -15,6 +15,7 @@ in_refmodel/Vector/main
 *.swn
 *.swo
 *.so
+.env.sh
 repositories
 
 __pycache__/
@@ -44,7 +45,6 @@ model_zoo
 *.log
 build/
 dist/
-*.ipynb
 lightning_logs/
 /work_dirs
 .history
@@ -91,7 +91,7 @@ model_zoo
 *.log
 build/
 dist/
-*.ipynb
+# *.ipynb
 lightning_logs/
 /work_dirs
 .history
@@ -138,7 +138,7 @@ model_zoo
 *.log
 build/
 dist/
-*.ipynb
+#  *.ipynb
 lightning_logs/
 /work_dirs
 .history
