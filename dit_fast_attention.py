@@ -139,8 +139,15 @@ def set_stepi_warpper(pipe):
     return wrapper
 
 
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,independent_calib=False,debug=False):
+
+def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,independent_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
+    
+    
+    # calibration raw
+    generator=torch.manual_seed(seed)
+    raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+    raw_outs=np.concatenate(raw_outs,axis=0)
     
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}.pt"
     if use_cache and os.path.exists(cache_file):
@@ -153,12 +160,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, w
             attn: Attention = block.attn1
             attn.set_processor(AttnProcessor2_0())
         
-        # calibration raw
-        np.random.seed(seed)
-        x=torch.randint(0, 1000, (n_calib,)).cuda()
-        generator=torch.manual_seed(seed)
-        raw_outs=pipe(x,num_inference_steps=n_steps,generator=generator,output_type='np.array',return_dict=False)
-        raw_outs=np.concatenate(raw_outs,axis=0)
+        
         
         all_steps_method=[]
         
@@ -178,7 +180,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, w
                     attn.set_processor(processor)
                     # compute output
                     generator=torch.manual_seed(seed)
-                    outs=pipe(x,num_inference_steps=n_steps,generator=generator,output_type='np.array',return_dict=False)
+                    outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
                     outs=np.concatenate(outs,axis=0)
                     ssim=0
                     for i in range(raw_outs.shape[0]):
@@ -211,7 +213,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, w
         
     # test final ssim
     generator=torch.manual_seed(seed)
-    outs=pipe(x,num_inference_steps=n_steps,generator=generator,output_type='np.array',return_dict=False)
+    outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
     outs=np.concatenate(outs,axis=0)
     ssim=0
     for i in range(raw_outs.shape[0]):

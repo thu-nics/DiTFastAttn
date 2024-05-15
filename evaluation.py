@@ -6,6 +6,7 @@ from PIL import Image
 import os
 from torchmetrics.image.inception import InceptionScore
 from pytorch_fid.fid_score import calculate_fid_given_paths
+from torchmetrics.multimodal.clip_score import CLIPScore
 from diffusers.models.attention_processor import Attention
 
 def evaluate_template_matching(order_list, cal_cost, pipe):
@@ -44,7 +45,7 @@ def preprocess_image(image):
     return F.center_crop(image, (256, 256))
 
 
-def evaluate_quantitative_scores(dit_pipeline,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=50,fake_image_path="output/fake_images"):
+def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images"):
     results={}
     # Inception Score
     inception = InceptionScore()
@@ -56,7 +57,7 @@ def evaluate_quantitative_scores(dit_pipeline,real_image_path,n_images=5000,batc
     os.makedirs(fake_image_path, exist_ok=True)
     for i in range(0, n_images, batchsize):
         class_ids = np.random.randint(0, 1000, batchsize)
-        output = dit_pipeline(class_labels=class_ids, generator=generator, output_type="np",num_inference_steps=num_inference_steps)
+        output = pipe(class_labels=class_ids, generator=generator, output_type="np",num_inference_steps=num_inference_steps)
         fake_images = output.images
         # Inception Score
         torch_images=torch.Tensor(fake_images*255).byte().permute(0,3,1,2).contiguous()
@@ -74,6 +75,50 @@ def evaluate_quantitative_scores(dit_pipeline,real_image_path,n_images=5000,batc
     IS=inception.compute()
     results["IS"]=IS
     print(f"Inception Score: {IS}")
+    
+    device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
+    fid_value=calculate_fid_given_paths([real_image_path,fake_image_path],64,device,dims=2048,num_workers=8)
+    results["FID"]=fid_value
+    print(f"FID: {fid_value}")
+    return results
+
+def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images"):
+    results={}
+    # Inception Score
+    inception = InceptionScore()
+    clip = CLIPScore(model_name_or_path="openai/clip-vit-base-patch16")
+    # FID
+    np.random.seed(seed)
+    generator = torch.manual_seed(seed)
+    fake_image_path = "output/pixart_fake_images"
+    if os.path.exists(fake_image_path):
+        os.system(f"rm -rf {fake_image_path}")
+    os.makedirs(fake_image_path, exist_ok=True)
+    for index in range(0, n_images, batchsize):
+        slice = mscoco_anno['annotations'][index:index+batchsize]
+        filename_list = [str(d['id']).zfill(12) for d in slice]
+        caption_list = [d['caption'] for d in slice]
+        output = pipe(caption_list, generator = generator, output_type="np",num_inference_steps=num_inference_steps)
+        # output = pipe(caption_list, generator = generator)
+        fake_images = output.images
+        # Inception Score
+        count = 0
+        torch_images=torch.Tensor(fake_images*255).byte().permute(0,3,1,2).contiguous()
+        torch_images=torch.nn.functional.interpolate(torch_images, size=(256, 256), mode='bilinear', align_corners=False)
+        inception.update(torch_images)
+        clip.update(torch_images, caption_list)
+        for j, image in enumerate(fake_images):
+            #image = image.astype(np.uint8)
+            image = F.to_pil_image((image * 255).astype(np.uint8))
+            image.save(f"{fake_image_path}/{filename_list[count]}.jpg")
+            count += 1
+    
+    IS=inception.compute()
+    CLIP = clip.compute()
+    results["IS"]=IS
+    results['CLIP'] = CLIP
+    print(f"Inception Score: {IS}")
+    print(f"CLIP Score: {CLIP}")
     
     device = torch.device('cuda' if (torch.cuda.is_available()) else 'cpu')
     fid_value=calculate_fid_given_paths([real_image_path,fake_image_path],64,device,dims=2048,num_workers=8)
