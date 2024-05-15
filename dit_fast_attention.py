@@ -149,7 +149,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
     raw_outs=np.concatenate(raw_outs,axis=0)
     
-    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}.pt"
+    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}.pt"
     if use_cache and os.path.exists(cache_file):
         all_steps_method=torch.load(cache_file)
     else:

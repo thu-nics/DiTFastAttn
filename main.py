@@ -4,7 +4,7 @@ import argparse
 from evaluation import evaluate_quantitative_scores
 from dit_fast_attention import transform_model_fast_attention
 import os
-
+from utils import calculate_flops
 
 def main():
     parser = argparse.ArgumentParser()
@@ -22,13 +22,17 @@ def main():
     args = parser.parse_args()
 
     raw_pipe = DiTPipeline.from_pretrained(args.model, torch_dtype=torch.float16).to("cuda")
+    
 
     # calib_dataset = [torch.randint(0, 1000, (args.n_calib_data,))]
     calib_x=torch.randint(0, 1000, (args.n_calib,),generator=torch.Generator().manual_seed(3)).to("cuda")
+    raw_macs=calculate_flops(raw_pipe, calib_x[0:1],n_steps=args.n_steps)
     pipe,calib_ssim=transform_model_fast_attention(raw_pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
 
     # evaluate the results
     fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}"
+    
+    macs=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
     result = evaluate_quantitative_scores(
         pipe, args.eval_real_image_path, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
     )
@@ -36,7 +40,7 @@ def main():
     # save the result
     print(result)
     with open("output/results.txt", "a+") as f:
-        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\n\n")
+        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\nraw_macs={raw_macs},macs={macs}\n\n")
 
 
 if __name__ == "__main__":
