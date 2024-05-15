@@ -13,6 +13,17 @@ class FastAttnProcessor:
     def __init__(self, window_size,steps_method):
         self.window_size=window_size
         self.steps_method=steps_method
+        self.need_compute_residual=[]
+        for i,method in enumerate(steps_method):
+            need=False
+            if "full_attn" in method:
+                for j in range(i+1,len(steps_method)):
+                    if "residual_window_attn" in steps_method[j]:
+                        need=True
+                    if "full_attn" in steps_method[j]:
+                        break
+            self.need_compute_residual.append(need)
+        # print(f"need_compute_residual {[(_,__) for _,__ in zip(steps_method,self.need_compute_residual)]}")
     
     def __call__(
         self,
@@ -85,9 +96,10 @@ class FastAttnProcessor:
             
             if "full_attn" in method:
                 all_hidden_states=flash_attn.flash_attn_func(query, key, value)
-                w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
-                residual=all_hidden_states-w_hidden_states
-                attn.cached_residual=residual
+                if self.need_compute_residual[attn.stepi]:
+                    w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
+                    residual=all_hidden_states-w_hidden_states
+                    attn.cached_residual=residual
                 hidden_states=all_hidden_states
             elif "residual_window_attn" in method:
                 w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
@@ -127,7 +139,7 @@ def set_stepi_warpper(pipe):
     return wrapper
 
 
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,independent_calib=False):
+def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,independent_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
     
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}.pt"
@@ -152,7 +164,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, threshold=0.98, w
         
         # sequential greedy calibration 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
-            if 1 and blocki==1:
+            if debug and blocki==1:
                 # DEBUG
                 all_steps_method*=len(pipe.transformer.transformer_blocks)
                 break
