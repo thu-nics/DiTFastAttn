@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--n_steps", type=int, default=20)
     parser.add_argument("--threshold", type=float, default=0.98)
     parser.add_argument("--window_size", type=int, default=64)
-    parser.add_argument("--independent_calib", action="store_true")
+    parser.add_argument("--sequential_calib", action="store_true")
     parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
     parser.add_argument("--eval_n_images", type=int, default=5000)
     parser.add_argument("--eval_batchsize", type=int, default=32)
@@ -25,10 +25,10 @@ def main():
 
     # calib_dataset = [torch.randint(0, 1000, (args.n_calib_data,))]
     calib_x=torch.randint(0, 1000, (args.n_calib,),generator=torch.Generator().manual_seed(3)).to("cuda")
-    pipe,calib_ssim=transform_model_fast_attention(raw_pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, independent_calib=args.independent_calib,debug=args.debug)
+    pipe,calib_ssim=transform_model_fast_attention(raw_pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
 
     # evaluate the results
-    fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_independent{args.independent_calib}"
+    fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}"
     result = evaluate_quantitative_scores(
         pipe, args.eval_real_image_path, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
     )

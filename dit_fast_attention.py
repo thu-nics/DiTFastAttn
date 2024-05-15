@@ -140,7 +140,7 @@ def set_stepi_warpper(pipe):
 
 
 
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,independent_calib=False,debug=False):
+def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
     
     
@@ -158,6 +158,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         # reset all processors
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             attn: Attention = block.attn1
+            attn.raw_processor=attn.processor
             attn.set_processor(AttnProcessor2_0())
         
         
@@ -166,6 +167,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         
         # sequential greedy calibration 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
+            attn=block.attn1
             if debug and blocki==1:
                 # DEBUG
                 all_steps_method*=len(pipe.transformer.transformer_blocks)
@@ -179,24 +181,32 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                     processor=FastAttnProcessor(window_size,steps_method)
                     attn.set_processor(processor)
                     # compute output
-                    generator=torch.manual_seed(seed)
-                    outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+                    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
                     outs=np.concatenate(outs,axis=0)
                     ssim=0
                     for i in range(raw_outs.shape[0]):
                         ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
                     ssim/=raw_outs.shape[0]
                     print(f"Block {blocki} step {step_i} method={method} SSIM {ssim}" )
+                    
+                    # attn.set_processor(AttnProcessor2_0())
+                    # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+                    # outs=np.concatenate(outs,axis=0)
+                    # ssim=0
+                    # for i in range(raw_outs.shape[0]):
+                    #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+                    # ssim/=raw_outs.shape[0]
+                    # print(f"Block {blocki} step {step_i} method={method} SSIM {ssim}" )
+                    
                     if ssim>threshold:
                         selected_method=method
-                    del processor
                 steps_method[step_i]=selected_method
             print(f"Block {blocki} selected steps_method {steps_method}")
-            if independent_calib:
+            if sequential_calib:
                 # independent calibration
-                processor=AttnProcessor2_0()
-            else:
                 processor=FastAttnProcessor(window_size,steps_method)
+            else:
+                processor=AttnProcessor2_0()
                 
             attn.set_processor(processor)
             all_steps_method.append(steps_method)
@@ -212,8 +222,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
         
     # test final ssim
-    generator=torch.manual_seed(seed)
-    outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
     outs=np.concatenate(outs,axis=0)
     ssim=0
     for i in range(raw_outs.shape[0]):

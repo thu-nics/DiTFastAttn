@@ -50,7 +50,7 @@ def main():
     slice=np.random.choice(mscoco_anno['annotations'],args.n_calib)
     filename_list = [str(d['id']).zfill(12) for d in slice]
     calib_x = [d['caption'] for d in slice]
-    pipe,calib_ssim=transform_model_fast_attention(raw_pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, independent_calib=args.independent_calib,debug=args.debug)
+    pipe,calib_ssim=transform_model_fast_attention(raw_pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.independent_calib,debug=args.debug)
 
     # evaluate the results
     fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_independent{args.independent_calib}"
