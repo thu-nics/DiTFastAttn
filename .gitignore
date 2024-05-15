@@ -15,6 +15,7 @@ in_refmodel/Vector/main
 *.swn
 *.swo
 *.so
+cache
 .env.sh
 repositories
 

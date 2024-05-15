@@ -44,14 +44,13 @@ def preprocess_image(image):
     return F.center_crop(image, (256, 256))
 
 
-def evaluate_quantitative_scores(dit_pipeline,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=50):
+def evaluate_quantitative_scores(dit_pipeline,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=50,fake_image_path="output/fake_images"):
     results={}
     # Inception Score
     inception = InceptionScore()
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    fake_image_path = "output/fake_images"
     if os.path.exists(fake_image_path):
         os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
