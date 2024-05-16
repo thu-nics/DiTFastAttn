@@ -25,7 +25,10 @@ def count_flops_attn(m:Attention, i, o):
     elif m.norm_cross:
         encoder_hidden_states = m.norm_encoder_hidden_states(encoder_hidden_states)
     batch_size,kv_seq_len,dim=encoder_hidden_states.size()
-    
+
+    ops_qk=q_seq_len*kv_seq_len*m.heads*batch_size*dim//m.heads
+    ops_kv=q_seq_len*dim*batch_size*kv_seq_len
+
     if isinstance(m.processor, FastAttnProcessor):
         processor:FastAttnProcessor=m.processor
         method=processor.steps_method[m.stepi-1]
@@ -33,117 +36,30 @@ def count_flops_attn(m:Attention, i, o):
         ws=processor.window_size[1]-processor.window_size[0]
         
         if method=="full_attn":
-            ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads
-            ops_kv=q_seq_len*dim*batch_size*kv_seq_len
             if processor.need_compute_residual[m.stepi-1]:
                 ops_qk*=(1+ws/kv_seq_len)
                 ops_kv*=(1+ws/kv_seq_len)
         elif method=="full_attn+cfg_attn_share":
-            ops_qk=q_seq_len*kv_seq_len*dim*batch_size/2*dim//m.heads
-            ops_kv=kv_seq_len*dim*batch_size*dim//m.heads
+            ops_qk/=2
+            if processor.need_compute_residual[m.stepi-1]:
+                ops_qk*=(1+ws/kv_seq_len)
+                ops_kv*=(1+ws/kv_seq_len)
         elif method=="residual_window_attn":
-            ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads*(ws/kv_seq_len)
-            ops_kv=q_seq_len*dim*batch_size*kv_seq_len*(ws/kv_seq_len)
+            ops_qk*=(ws/kv_seq_len)
+            ops_kv*=(ws/kv_seq_len)
         elif method=="residual_window_attn+cfg_attn_share":
-            ops_qk=q_seq_len*kv_seq_len*dim*batch_size/2*dim//m.heads*(ws/kv_seq_len)
-            ops_kv=kv_seq_len*dim*batch_size*dim//m.heads*(ws/kv_seq_len)
-        elif method=="cfg_attn_share":
+            ops_qk*=(ws/kv_seq_len/2)
+            ops_kv*=(ws/kv_seq_len)
+        elif method=="output_share":
             ops_qk=0
             ops_kv=0
-    else:
-        ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads
-        ops_kv=q_seq_len*dim*batch_size*kv_seq_len
-    # if m.name in all_ops:
-    #     all_ops[m.name]+=ops_qk+ops_kv
-    # else:
-    #     all_ops[m.name]=ops_qk+ops_kv
+        else:
+            raise NotImplementedError
+
     
     matmul_ops=ops_qk+ops_kv
+    assert matmul_ops>=0
     m.total_ops += torch.DoubleTensor([matmul_ops])
-
-# all_ops={}
-# def linear_hook(m,i,o):
-#     ops=o.numel()*m.in_features
-#     if m.name in all_ops:
-#         all_ops[m.name]+=ops
-#     else:
-#         all_ops[m.name]=ops
-    
-# def normal_attention_hook(m:Attention,i,o):
-#     hidden_states=i[0]
-#     encoder_hidden_states=i[1]
-#     attention_mask=i[2]
-#     assert attention_mask is None
-    
-#     input_ndim = hidden_states.ndim
-
-#     if input_ndim == 4:
-#         batch_size, channel, height, width = hidden_states.shape
-#         hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-#     bs, q_seq_len, dim = hidden_states.size()
-    
-#     if encoder_hidden_states is None:
-#         encoder_hidden_states = hidden_states
-#     elif m.norm_cross:
-#         encoder_hidden_states = m.norm_encoder_hidden_states(encoder_hidden_states)
-#     bs,kv_seq_len,dim=encoder_hidden_states.size()
-    
-#     ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads
-#     ops_kv=q_seq_len*dim*batch_size*kv_seq_len
-#     if m.name in all_ops:
-#         all_ops[m.name]+=ops_qk+ops_kv
-#     else:
-#         all_ops[m.name]=ops_qk+ops_kv
-
-# def fast_attention_hook(m,i,o):
-#     hidden_states=i[0]
-#     encoder_hidden_states=i[1]
-#     attention_mask=i[2]
-#     assert attention_mask is None
-    
-#     input_ndim = hidden_states.ndim
-
-#     if input_ndim == 4:
-#         batch_size, channel, height, width = hidden_states.shape
-#         hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-#     bs, q_seq_len, dim = hidden_states.size()
-    
-#     if encoder_hidden_states is None:
-#         encoder_hidden_states = hidden_states
-#     elif m.norm_cross:
-#         encoder_hidden_states = m.norm_encoder_hidden_states(encoder_hidden_states)
-#     bs,kv_seq_len,dim=encoder_hidden_states.size()
-    
-    
-    
-#     processor:FastAttnProcessor=m.processor
-#     method=processor.steps_method[m.stepi-1]
-    
-#     ws=processor.window_size[1]-processor.window_size[0]
-    
-#     if method=="full_attn":
-#         ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads
-#         ops_kv=q_seq_len*dim*batch_size*kv_seq_len
-#         if processor.need_compute_residual[m.stepi-1]:
-#             ops_qk*=(1+ws/kv_seq_len)
-#             ops_kv*=(1+ws/kv_seq_len)
-#     elif method=="full_attn+cfg_attn_share":
-#         ops_qk=q_seq_len*kv_seq_len*dim*batch_size/2*dim//m.heads
-#         ops_kv=kv_seq_len*dim*batch_size*dim//m.heads
-#     elif method=="residual_window_attn":
-#         ops_qk=q_seq_len*kv_seq_len*dim*batch_size*dim//m.heads*(ws/kv_seq_len)
-#         ops_kv=q_seq_len*dim*batch_size*kv_seq_len*(ws/kv_seq_len)
-#     elif method=="residual_window_attn+cfg_attn_share":
-#         ops_qk=q_seq_len*kv_seq_len*dim*batch_size/2*dim//m.heads*(ws/kv_seq_len)
-#         ops_kv=kv_seq_len*dim*batch_size*dim//m.heads*(ws/kv_seq_len)
-#     elif method=="cfg_attn_share":
-#         ops_qk=0
-#         ops_kv=0
-#     if m.name in all_ops:
-#         all_ops[m.name]+=ops_qk+ops_kv
-#     else:
-#         all_ops[m.name]=ops_qk+ops_kv
-
 
 def profile_pipe_transformer(
     pipe,
@@ -214,11 +130,12 @@ def profile_pipe_transformer(
             #     m_ops, m_params = m.total_ops, m.total_params
             next_dict = {}
             if m in handler_collection and not isinstance(
-                m, (nn.Sequential, nn.ModuleList)
+                m, (nn.Sequential, nn.ModuleList, Attention)
             ):
                 m_ops, m_params = m.total_ops.item(), m.total_params.item()
             else:
                 m_ops, m_params, next_dict = dfs_count(m, prefix=prefix + "\t")
+                m_ops+=m.total_ops.item()
             ret_dict[n] = (m_ops, m_params, next_dict)
             total_ops += m_ops
             total_params += m_params
@@ -241,7 +158,8 @@ def profile_pipe_transformer(
 
 
 def calculate_flops(pipe,x, n_steps):
-    macs, params = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
-                        custom_ops={Attention: count_flops_attn})
-    print(f"macs is {macs}")
+    macs_without_attn, params, ret_dict = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},verbose=True,ret_layer_info=True)
+    macs, params,ret_dict2 = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
+                        custom_ops={Attention: count_flops_attn},verbose=True,ret_layer_info=True)
+    print(f"macs is {macs/1e6}M, macs_without_attn is {macs_without_attn/1e6}M, attn is {macs-macs_without_attn}")
     return macs

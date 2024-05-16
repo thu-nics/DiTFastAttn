@@ -6,6 +6,7 @@ import flash_attn
 import functools
 from skimage.metrics import structural_similarity
 import matplotlib.pyplot as plt
+import collections
 import numpy as np
 import os
 
@@ -220,7 +221,15 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     for blocki, block in enumerate(pipe.transformer.transformer_blocks):
         attn: Attention = block.attn1
         attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
-        
+    
+    # statistics
+    counts=collections.Counter([method for steps_method in all_steps_method for method in steps_method])
+    # print(f"Counts {counts}")
+    # compute fraction
+    total=sum(counts.values())
+    for k,v in counts.items():
+        print(f"{k} {v/total}")
+
     # test final ssim
     outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
     outs=np.concatenate(outs,axis=0)
