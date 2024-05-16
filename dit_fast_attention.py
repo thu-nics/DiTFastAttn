@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import collections
 import numpy as np
 import os
+import time
 
 class FastAttnProcessor:
     def __init__(self, window_size,steps_method):
@@ -139,11 +140,43 @@ def set_stepi_warpper(pipe):
 
     return wrapper
 
-
-
+def speed_test(pipe):
+    attn=pipe.transformer.transformer_blocks[0].attn1
+    all_results=[]
+    for seqlen in [1024,1024*4,1024*16]:
+        print(f"Test seqlen {seqlen}")
+        for method in ["ori","full_attn","full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+        # for method in ["ori","full_attn","residual_window_attn","output_share"]:
+            if method=="ori":
+                attn.set_processor(AttnProcessor2_0())
+                attn.processor.need_compute_residual=[1]
+                need_compute_residuals=[False]
+            else:
+                attn.set_processor(FastAttnProcessor([0,0],[method]))
+                if "full_attn" in method:
+                    need_compute_residuals=[False,True]
+                else:
+                    need_compute_residuals=[False]
+            for need_compute_residual in need_compute_residuals:
+                attn.processor.need_compute_residual[0]=need_compute_residual
+                # warmup
+                x=torch.randn(2,seqlen,attn.query_dim).half().cuda()
+                for i in range(10):
+                    attn.stepi=0
+                    attn(x)
+                torch.cuda.synchronize()
+                st=time.time()
+                for i in range(1000):
+                    attn.stepi=0
+                    attn(x)
+                torch.cuda.synchronize()
+                et=time.time()
+                print(f"Method {method} need_compute_residual {need_compute_residual} time {et-st}")
+                all_results.append(et-st)
+        print(all_results)
+            
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
-    
     
     # calibration raw
     generator=torch.manual_seed(seed)
@@ -162,11 +195,9 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             attn.raw_processor=attn.processor
             attn.set_processor(AttnProcessor2_0())
         
-        
-        
         all_steps_method=[]
         
-        # sequential greedy calibration 
+        # greedy calibration 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             attn=block.attn1
             if debug and blocki==1:
@@ -176,7 +207,8 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             steps_method=["full_attn"]*n_steps
             for step_i in range(1, n_steps):
                 selected_method="full_attn"
-                for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+                # for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+                for method in ["residual_window_attn","output_share"]:
                     steps_method[step_i]=method
                     # TODO search widnow_size
                     processor=FastAttnProcessor(window_size,steps_method)
@@ -189,15 +221,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                         ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
                     ssim/=raw_outs.shape[0]
                     print(f"Block {blocki} step {step_i} method={method} SSIM {ssim}" )
-                    
-                    # attn.set_processor(AttnProcessor2_0())
-                    # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-                    # outs=np.concatenate(outs,axis=0)
-                    # ssim=0
-                    # for i in range(raw_outs.shape[0]):
-                    #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-                    # ssim/=raw_outs.shape[0]
-                    # print(f"Block {blocki} step {step_i} method={method} SSIM {ssim}" )
                     
                     if ssim>threshold:
                         selected_method=method

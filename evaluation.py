@@ -8,6 +8,7 @@ from torchmetrics.image.inception import InceptionScore
 from pytorch_fid.fid_score import calculate_fid_given_paths
 from torchmetrics.multimodal.clip_score import CLIPScore
 from diffusers.models.attention_processor import Attention
+import time
 
 def evaluate_template_matching(order_list, cal_cost, pipe):
     count = {0:0}
@@ -44,6 +45,17 @@ def preprocess_image(image):
     image = image.permute(0, 3, 1, 2) / 255.0
     return F.center_crop(image, (256, 256))
 
+def evaluate_latencies(pipe, n_steps,calib_x,bs):
+    latencies={}
+    for b in bs:
+        st=time.time()
+        for i in range(10):
+            pipe([calib_x[0] for _ in range(b)],num_inference_steps=n_steps)
+        ed=time.time()
+        print(f"average time for 1 inference: {(ed-st)/10}")
+        t= (ed-st)/10
+        latencies[b]=t
+    return latencies
 
 def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images"):
     results={}
@@ -90,7 +102,6 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    fake_image_path = "output/pixart_fake_images"
     if os.path.exists(fake_image_path):
         os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)

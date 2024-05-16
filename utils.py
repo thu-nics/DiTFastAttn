@@ -59,6 +59,8 @@ def count_flops_attn(m:Attention, i, o):
     
     matmul_ops=ops_qk+ops_kv
     assert matmul_ops>=0
+    if not hasattr(m, "total_ops"):
+        m.total_ops = torch.DoubleTensor([matmul_ops])
     m.total_ops += torch.DoubleTensor([matmul_ops])
 
 def profile_pipe_transformer(
@@ -158,8 +160,9 @@ def profile_pipe_transformer(
 
 
 def calculate_flops(pipe,x, n_steps):
-    macs_without_attn, params, ret_dict = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},verbose=True,ret_layer_info=True)
+    macs_without_attn, params, ret_dict = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},verbose=0,ret_layer_info=True)
     macs, params,ret_dict2 = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
-                        custom_ops={Attention: count_flops_attn},verbose=True,ret_layer_info=True)
-    print(f"macs is {macs/1e6}M, macs_without_attn is {macs_without_attn/1e6}M, attn is {macs-macs_without_attn}")
-    return macs
+                        custom_ops={Attention: count_flops_attn},verbose=0,ret_layer_info=True)
+    print(f"macs is {macs/1e9}G, macs_without_attn is {macs_without_attn/1e9}G, attn is {(macs-macs_without_attn)/1e9}G")
+    attn_mac=(macs-macs_without_attn)/1e9
+    return macs,attn_mac
