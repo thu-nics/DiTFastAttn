@@ -8,6 +8,7 @@ from skimage.metrics import structural_similarity
 import matplotlib.pyplot as plt
 import collections
 import numpy as np
+import torch.nn as nn
 import os
 import time
 from utils import set_profile_transformer_block_hook,process_profile_transformer_block
@@ -122,6 +123,8 @@ class FastAttnProcessor:
         if attn.residual_connection:
             hidden_states = hidden_states + residual
         
+        hidden_states = hidden_states / attn.rescale_output_factor
+        
         return hidden_states
     
     def __call__(
@@ -151,15 +154,30 @@ class FastAttnProcessor:
                 self.steps_method[attn.stepi]=selected_method
             self.need_compute_residual[attn.stepi]=True
         hidden_states=self.run_forward_method(attn,hidden_states,encoder_hidden_states,attention_mask,temb,self.steps_method[attn.stepi])
-        
-        # if attn.residual_connection:
-        #     hidden_states = hidden_states + residual
-
-        hidden_states = hidden_states / attn.rescale_output_factor
-        
         attn.stepi += 1
         return hidden_states
+
+class FastFeedForward(nn.Module):
+    def __init__(self,net,steps_method):
+        self.net=net
+        self.steps_method=steps_method
     
+    def forward(self,hidden_states):
+        method=self.steps_method[self.net.stepi]
+        if "full_attn" in method:
+            hidden_states=self.net.cached_output
+        else:
+            if "cfg_attn_share" in method:
+                batch_size=hidden_states.shape[0]
+                hidden_states = hidden_states[:batch_size//2]
+            
+            hidden_states=self.net(hidden_states)
+            
+            if "cfg_attn_share" in method:
+                hidden_states=torch.cat([hidden_states, hidden_states], dim=0)
+            
+            self.net.cached_output=hidden_states
+        return hidden_states
 
 def set_stepi_warp(pipe):
     @functools.wraps(pipe)
@@ -193,7 +211,7 @@ def compute_mac_frac(data,window_size,v_seqlen):
 
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warp(raw_pipe)
-    blocks=pipe.transformer.transformer_blocks[:2]
+    blocks=pipe.transformer.transformer_blocks
     
     # evaluate sensitivity
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.pt"
@@ -241,14 +259,14 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                     sensitivities.append((blocki,stepi,method,macs,ssim))
                     print(f"Block {blocki} step {stepi} method {method} SSIM {ssim} macs {macs}")
         torch.save(sensitivities,sensitivity_cache_file)
-        # test final ssim
-        outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        outs=np.concatenate(outs,axis=0)
-        ssim=0
-        for i in range(raw_outs.shape[0]):
-            ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-        ssim/=raw_outs.shape[0]
-        print(f"Final SSIM {ssim}")
+        # # test final ssim
+        # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+        # outs=np.concatenate(outs,axis=0)
+        # ssim=0
+        # for i in range(raw_outs.shape[0]):
+        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+        # ssim/=raw_outs.shape[0]
+        # print(f"Final SSIM {ssim}")
     
     
     
@@ -277,7 +295,8 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             st=mid
     for blocki,block in enumerate(blocks):
         attn=block.attn1
-        processor=FastAttnProcessor(window_size,[blocks_methods[(blocki,stepi)] for _ in range(n_steps)])
+        processor=FastAttnProcessor(window_size,[blocks_methods[(blocki,stepi)] for stepi in range(n_steps)])
+        print(f"Block {blocki} method {processor.steps_method}")
         attn.set_processor(processor)
     print(f"Final MAC Frac {frac}")
         

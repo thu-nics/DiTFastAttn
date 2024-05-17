@@ -5,7 +5,6 @@ import thop
 from thop.profile import *
 
 
-global_attn_count=0
 def count_flops_attn(m:Attention, i, o):
     hidden_states=i[0]
     encoder_hidden_states=None
@@ -66,8 +65,6 @@ def count_flops_attn(m:Attention, i, o):
         m.total_ops = torch.DoubleTensor([matmul_ops])
     else:
         m.total_ops += torch.DoubleTensor([matmul_ops])
-    global global_attn_count
-    global_attn_count+=matmul_ops
 
 def set_profile_transformer_block_hook(block,verbose=False,report_missing=False):
     custom_ops={Attention: count_flops_attn}
@@ -243,6 +240,5 @@ def calculate_flops(pipe,x, n_steps):
     macs, params,ret_dict2 = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
                         custom_ops={Attention: count_flops_attn},verbose=0,ret_layer_info=True)
     print(f"macs is {macs/1e9}G, macs_without_attn is {macs_without_attn/1e9}G, attn is {(macs-macs_without_attn)/1e9}G")
-    print(f"global_attn_count is {global_attn_count/1e9}G")
     attn_mac=(macs-macs_without_attn)
     return macs/1e9,attn_mac/1e9
