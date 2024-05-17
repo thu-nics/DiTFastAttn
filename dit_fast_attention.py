@@ -142,6 +142,7 @@ def set_stepi_warpper(pipe):
             
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
+    blocks=pipe.transformer.transformer_blocks
     
     # calibration raw
     generator=torch.manual_seed(seed)
@@ -155,20 +156,20 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         # calibration
         
         # reset all processors
-        for blocki, block in enumerate(pipe.transformer.transformer_blocks):
+        for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
             attn.raw_processor=attn.processor
             attn.set_processor(AttnProcessor2_0())
         
-        all_steps_method=[["full_attn" for __ in range(n_steps)] for _ in range(len(pipe.transformer.transformer_blocks))]
+        all_steps_method=[["full_attn" for __ in range(n_steps)] for _ in range(len(blocks))]
         
         # ssim_theshold for each calibration
         ssim_thresholds=[]
-        all_steps=blocki*len(pipe.transformer.transformer_blocks)
+        all_steps=blocki*len(blocks)
         
-        for step_i in range(n_steps):
+        for blocki in range(len(blocks)):
             sub_list=[]
-            for blocki in range(len(pipe.transformer.transformer_blocks)):
+            for step_i in range(n_steps):
                 if sequential_calib:
                     interval=(1-threshold)/all_steps
                     sub_list.append(1-interval*(blocki*n_steps+step_i))
@@ -177,7 +178,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             ssim_thresholds.append(sub_list)
 
         # greedy calibration 
-        for blocki, block in enumerate(pipe.transformer.transformer_blocks):
+        for blocki, block in enumerate(blocks):
             attn=block.attn1
             steps_method=all_steps_method[blocki]
             for step_i in range(1, n_steps):
@@ -216,7 +217,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         torch.save(all_steps_method,cache_file)
     
     # set processor
-    for blocki, block in enumerate(pipe.transformer.transformer_blocks):
+    for blocki, block in enumerate(blocks):
         attn: Attention = block.attn1
         attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
     
