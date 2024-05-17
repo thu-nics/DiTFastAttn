@@ -10,7 +10,8 @@ conda create -n difa python=3.10
 
 ```
 pip install torch numpy packaging matplotlib scikit-image
-pip install thop diffusers pytorch_fid torchmetrics accelerate torchmetrics[image]  flash-attn 
+pip install git+https://github.com/huggingface/diffusers
+pip install thop pytorch_fid torchmetrics accelerate torchmetrics[image] beautifulsoup4 ftfy flash-attn transformers SentencePiece
 ```
 
 # Usage

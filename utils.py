@@ -43,6 +43,7 @@ def count_flops_attn(m:Attention, i, o):
                 ops_kv*=(1+ws/kv_seq_len)
         elif method=="full_attn+cfg_attn_share":
             ops_qk/=2
+            ops_kv/=2
             if processor.need_compute_residual[m.stepi-1]:
                 ops_qk*=(1+ws/kv_seq_len)
                 ops_kv*=(1+ws/kv_seq_len)
@@ -51,7 +52,7 @@ def count_flops_attn(m:Attention, i, o):
             ops_kv*=(ws/kv_seq_len)
         elif method=="residual_window_attn+cfg_attn_share":
             ops_qk*=(ws/kv_seq_len/2)
-            ops_kv*=(ws/kv_seq_len)
+            ops_kv*=(ws/kv_seq_len/2)
         elif method=="output_share":
             ops_qk=0
             ops_kv=0

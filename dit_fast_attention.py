@@ -15,7 +15,14 @@ class FastAttnProcessor:
     def __init__(self, window_size,steps_method):
         self.window_size=window_size
         self.steps_method=steps_method
-        self.need_compute_residual=[]
+        self.need_compute_residual=self.compute_need_compute_residual(steps_method)
+        # print(f"need_compute_residual {[(_,__) for _,__ in zip(steps_method,self.need_compute_residual)]}")
+        
+        self.is_calibration=False
+        self.calib_cos_sim_threshold=None
+    
+    def compute_need_compute_residual(self,steps_method):
+        need_compute_residual=[]
         for i,method in enumerate(steps_method):
             need=False
             if "full_attn" in method:
@@ -24,22 +31,10 @@ class FastAttnProcessor:
                         need=True
                     if "full_attn" in steps_method[j]:
                         break
-            self.need_compute_residual.append(need)
-        # print(f"need_compute_residual {[(_,__) for _,__ in zip(steps_method,self.need_compute_residual)]}")
+            need_compute_residual.append(need)
+        return need_compute_residual
     
-    def __call__(
-        self,
-        attn: Attention,
-        hidden_states: torch.FloatTensor,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        temb: Optional[torch.FloatTensor] = None,
-        *args,
-        **kwargs,
-    ) -> torch.FloatTensor:
-        residual = hidden_states
-        method=self.steps_method[attn.stepi]
-        
+    def run_forward_method(self,attn,hidden_states,encoder_hidden_states,attention_mask,temb,method):
         if method=="output_share":
             hidden_states = attn.cached_output
         else:
@@ -121,7 +116,36 @@ class FastAttnProcessor:
                 hidden_states = torch.cat([hidden_states, hidden_states], dim=0)
             
             attn.cached_output = hidden_states
-
+        return hidden_states
+    
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        temb: Optional[torch.FloatTensor] = None,
+        *args,
+        **kwargs,
+    ) -> torch.FloatTensor:
+        residual = hidden_states
+        method=self.steps_method[attn.stepi]
+        if self.is_calibration:
+            if attn.stepi!=0:
+                raw_out=self.run_forward_method(attn,hidden_states,encoder_hidden_states,attention_mask,temb,"full_attn")
+                batch_size=hidden_states.shape[0]
+                selected_method="full_attn"
+                for test_mehtod in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+                    out=self.run_forward_method(attn,hidden_states,encoder_hidden_states,attention_mask,temb,test_mehtod)
+                    cos_sim=F.cosine_similarity(raw_out.view(batch_size,-1),out.view(batch_size,-1),dim=1).mean()
+                    # print(f"Method {test_mehtod} cos_sim {cos_sim} calib_cos_sim_threshold {self.calib_cos_sim_threshold}")
+                    if cos_sim>self.calib_cos_sim_threshold:
+                        selected_method=test_mehtod
+                # print(f"Selected method {selected_method}")
+                self.steps_method[attn.stepi]=selected_method
+            self.need_compute_residual[attn.stepi]=True
+        hidden_states=self.run_forward_method(attn,hidden_states,encoder_hidden_states,attention_mask,temb,self.steps_method[attn.stepi])
+        
         if attn.residual_connection:
             hidden_states = hidden_states + residual
 
@@ -129,8 +153,34 @@ class FastAttnProcessor:
         
         attn.stepi += 1
         return hidden_states
+    
 
-def set_stepi_warpper(pipe):
+# def processor_calibration_wrap(processor,cos_sim_threshold):
+#     processor.old_call=processor.__call__
+#     @functools.wraps(processor.__call__)
+#     def wrapper(*args, **kwargs):
+#         processor.is_calibration=True
+#         stepi=args[0].stepi
+#         raw_out=processor(*args, **kwargs)
+#         batch_size=raw_out.shape[0]
+#         selected_method="full_attn"
+#         for mehtod in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+#             processor.steps_method[stepi]=mehtod
+#             processor.compute_need_compute_residual(processor.steps_method)
+#             out=processor(*args, **kwargs)
+#             cos_sim=F.cosine_similarity(raw_out.view(batch_size,-1),out.view(batch_size,-1),dim=1).mean()
+#             if cos_sim>cos_sim_threshold:
+#                 selected_method=mehtod
+#         print(f"Selected method {selected_method} for step {stepi}")
+#         processor.steps_method[stepi]=selected_method
+#         processor.compute_need_compute_residual(processor.steps_method)
+#         processor.is_calibration=False
+#         final_out=processor(*args, **kwargs)
+#         processor.is_calibration=True
+#         return final_out
+#     return wrapper
+
+def set_stepi_warp(pipe):
     @functools.wraps(pipe)
     def wrapper(*args, **kwargs):
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
@@ -143,7 +193,7 @@ def set_stepi_warpper(pipe):
     return wrapper
             
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
-    pipe = set_stepi_warpper(raw_pipe)
+    pipe = set_stepi_warp(raw_pipe)
     blocks=pipe.transformer.transformer_blocks
     
     # calibration raw
@@ -155,7 +205,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     if use_cache and os.path.exists(cache_file):
         all_steps_method=torch.load(cache_file)
     else:
-        # calibration
         
         # reset all processors
         for blocki, block in enumerate(blocks):
@@ -167,64 +216,66 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         
         # ssim_theshold for each calibration
         ssim_thresholds=[]
-        all_steps=blocki*len(blocks)
-        
+        interval=(1-threshold)/len(blocks)/2
+        now_threshold=1-interval*len(blocks)
         for blocki in range(len(blocks)):
-            sub_list=[]
-            for step_i in range(n_steps):
-                if sequential_calib:
-                    interval=(1-threshold)/all_steps
-                    sub_list.append(1-interval*(blocki*n_steps+step_i))
-                else:
-                    sub_list.append(threshold)
-            ssim_thresholds.append(sub_list)
+            now_threshold-=interval
+            ssim_thresholds.append(now_threshold)
+        print(f"SSIM thresholds {ssim_thresholds}")
 
         # greedy calibration 
         for blocki, block in enumerate(blocks):
             attn=block.attn1
-            steps_method=all_steps_method[blocki]
-            for step_i in range(1, n_steps):
-                selected_method="full_attn"
-                for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
-                # for method in ["residual_window_attn","output_share"]:
-                    steps_method[step_i]=method
-                    # TODO search widnow_size
-                    processor=FastAttnProcessor(window_size,steps_method)
-                    attn.set_processor(processor)
-                    # compute output
-                    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-                    outs=np.concatenate(outs,axis=0)
-                    ssim=0
-                    for i in range(raw_outs.shape[0]):
-                        ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-                    ssim/=raw_outs.shape[0]
-                    print(f"Block {blocki} step {step_i} method={method} SSIM {ssim} target {ssim_thresholds[blocki][step_i]}" )
-                    
-                    if ssim>ssim_thresholds[blocki][step_i]:
-                        selected_method=method
-                steps_method[step_i]=selected_method
-            print(f"Block {blocki} selected steps_method {steps_method}")
-            if sequential_calib:
-                # independent calibration
-                processor=FastAttnProcessor(window_size,steps_method)
-            else:
-                processor=AttnProcessor2_0()
-            attn.set_processor(processor)
-                
+            # hook to get the input of block
+            def hook_fn(module, input, output):
+                attn.cached_input=input[0]
             
-        
+            # binary search
+            cos_sim_threshold_st=0.8
+            cos_sim_threshold_ed=1
+            n_search=6
+            for searchi in range(n_search):
+                if searchi==n_search-1:
+                    cos_sim_threshold=cos_sim_threshold_ed
+                else:
+                    cos_sim_threshold=(cos_sim_threshold_st+cos_sim_threshold_ed)/2
+                steps_method=["full_attn" for _ in range(n_steps)]
+                attn.set_processor(FastAttnProcessor(window_size,steps_method))
+                attn.processor.calib_cos_sim_threshold=cos_sim_threshold
+                attn.processor.is_calibration=True
+                # calib
+                outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+                attn.processor.is_calibration=False
+                attn.processor.need_compute_residual=attn.processor.compute_need_compute_residual(attn.processor.steps_method)
+                # print(f"Block {blocki} need_compute_residual {attn.processor.need_compute_residual}")
+                
+                # compute output
+                # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+                outs=np.concatenate(outs,axis=0)
+                ssim=0
+                for i in range(raw_outs.shape[0]):
+                    ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+                ssim/=raw_outs.shape[0]
+                # print(f"Block {blocki} method={attn.processor.steps_method} SSIM {ssim} target {ssim_thresholds[blocki]}" )
+                print(cos_sim_threshold,ssim,ssim_thresholds[blocki])
+                
+                if ssim>ssim_thresholds[blocki]:
+                    cos_sim_threshold_ed=cos_sim_threshold
+                else:
+                    cos_sim_threshold_st=cos_sim_threshold
+            print(f"Block {blocki} calibration finished with ssim={ssim} \n{attn.processor.steps_method}")
         # save cache
         if not os.path.exists("cache"):
             os.makedirs("cache")
         torch.save(all_steps_method,cache_file)
     
     # set processor
-    for blocki, block in enumerate(blocks):
-        attn: Attention = block.attn1
-        attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
+    # for blocki, block in enumerate(blocks):
+    #     attn: Attention = block.attn1
+    #     attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
     
     # statistics
-    counts=collections.Counter([method for steps_method in all_steps_method for method in steps_method])
+    counts=collections.Counter([method for block in blocks for method in block.attn1.processor.steps_method])
     # print(f"Counts {counts}")
     # compute fraction
     total=sum(counts.values())
