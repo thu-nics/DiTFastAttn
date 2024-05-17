@@ -159,55 +159,43 @@ class FastAttnProcessor:
 
 class FastFeedForward(nn.Module):
     def __init__(self,net,steps_method):
+        super().__init__()
         self.net=net
         self.steps_method=steps_method
+        self.stepi=None
+        self.cache_output=None
     
     def forward(self,hidden_states):
-        method=self.steps_method[self.net.stepi]
-        if "full_attn" in method:
-            hidden_states=self.net.cached_output
+        out=hidden_states
+        method=self.steps_method[self.stepi]
+        if method=="output_share":
+            out=self.cache_output
+        elif "cfg_attn_share" in method:
+            batch_size=hidden_states.shape[0]
+            out=out[:batch_size//2]
+            for module in self.net:
+                out=module(out)
+            out=torch.cat([out, out], dim=0)
+            self.cache_output=out
         else:
-            if "cfg_attn_share" in method:
-                batch_size=hidden_states.shape[0]
-                hidden_states = hidden_states[:batch_size//2]
-            
-            hidden_states=self.net(hidden_states)
-            
-            if "cfg_attn_share" in method:
-                hidden_states=torch.cat([hidden_states, hidden_states], dim=0)
-            
-            self.net.cached_output=hidden_states
-        return hidden_states
+            for module in self.net:
+                out=module(out)
+            self.cache_output=out
+        self.stepi+=1
+        return out
 
 def set_stepi_warp(pipe):
     @functools.wraps(pipe)
     def wrapper(*args, **kwargs):
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
-            block.attn1.stepi=0
-            block.attn1.cached_residual=None
-            block.attn1.cached_output=None
+            for layer in block.children():
+                layer.stepi=0
+                layer.cached_residual=None
+                layer.cached_output=None
             # print(f"Reset stepi to 0 for block {blocki}")
         return pipe(*args, **kwargs)
 
     return wrapper
-
-def compute_mac_frac(data,window_size,v_seqlen):
-    total=0
-    for method in data:
-        if method=="full_attn":
-            mac_frac=1
-        elif method=="full_attn+cfg_attn_share":
-            mac_frac=0.5
-        elif method=="residual_window_attn":
-            mac_frac=window_size/v_seqlen
-        elif method=="residual_window_attn+cfg_attn_share":
-            mac_frac=window_size/v_seqlen/2
-        elif method=="output_share":
-            mac_frac=0
-        else:
-            raise NotImplementedError
-    total+=mac_frac
-    return total/len(data)
 
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warp(raw_pipe)
@@ -224,6 +212,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             attn: Attention = block.attn1
             attn.raw_processor=attn.processor
             attn.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
+            block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
         # evaluate macs for full attn
         full_attn_macs=[]
         raw_total_macs=0
@@ -247,9 +236,11 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                     methods[stepi]=method
                     
                     attn.set_processor(FastAttnProcessor(window_size,methods))
+                    block.ff.steps_method=methods
                     handler_collection=set_profile_transformer_block_hook(block)
                     outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-                    macs,_=process_profile_transformer_block(block,handler_collection)
+                    macs,_,info=process_profile_transformer_block(block,handler_collection,ret_layer_info=True)
+                    # breakpoint()
                     macs=macs-full_attn_macs[blocki]*(n_steps-1)
                     outs=np.concatenate(outs,axis=0)
                     ssim=0
@@ -298,6 +289,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         processor=FastAttnProcessor(window_size,[blocks_methods[(blocki,stepi)] for stepi in range(n_steps)])
         print(f"Block {blocki} method {processor.steps_method}")
         attn.set_processor(processor)
+        block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
     print(f"Final MAC Frac {frac}")
         
     # statistics
