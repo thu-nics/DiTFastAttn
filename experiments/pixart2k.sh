@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=2 python main_txt2img.py --model PixArt-alpha/PixArt-Sigma-XL-2-2K-MS --n_calib 4 --n_steps 20 --threshold 0.95

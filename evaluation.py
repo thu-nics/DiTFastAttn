@@ -102,12 +102,16 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    if os.path.exists(fake_image_path):
-        os.system(f"rm -rf {fake_image_path}")
+    # if os.path.exists(fake_image_path):
+    #     os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
     for index in range(0, n_images, batchsize):
+        
         slice = mscoco_anno['annotations'][index:index+batchsize]
         filename_list = [str(d['id']).zfill(12) for d in slice]
+        if f"{filename_list[0]}.jpg" in os.listdir(fake_image_path):
+            continue
+        print(f"Processing {index}th image")
         caption_list = [d['caption'] for d in slice]
         output = pipe(caption_list, generator = generator, output_type="np",num_inference_steps=num_inference_steps)
         # output = pipe(caption_list, generator = generator)
@@ -135,7 +139,40 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
     fid_value=calculate_fid_given_paths([real_image_path,fake_image_path],64,device,dims=2048,num_workers=8)
     results["FID"]=fid_value
     print(f"FID: {fid_value}")
-    
-    
-    
     return results
+
+
+def method_speed_test(pipe):
+    attn=pipe.transformer.transformer_blocks[0].attn1
+    all_results=[]
+    for seqlen in [1024,1024*4,1024*16]:
+        print(f"Test seqlen {seqlen}")
+        for method in ["ori","full_attn","full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+        # for method in ["ori","full_attn","residual_window_attn","output_share"]:
+            if method=="ori":
+                attn.set_processor(AttnProcessor2_0())
+                attn.processor.need_compute_residual=[1]
+                need_compute_residuals=[False]
+            else:
+                attn.set_processor(FastAttnProcessor([0,0],[method]))
+                if "full_attn" in method:
+                    need_compute_residuals=[False,True]
+                else:
+                    need_compute_residuals=[False]
+            for need_compute_residual in need_compute_residuals:
+                attn.processor.need_compute_residual[0]=need_compute_residual
+                # warmup
+                x=torch.randn(2,seqlen,attn.query_dim).half().cuda()
+                for i in range(10):
+                    attn.stepi=0
+                    attn(x)
+                torch.cuda.synchronize()
+                st=time.time()
+                for i in range(1000):
+                    attn.stepi=0
+                    attn(x)
+                torch.cuda.synchronize()
+                et=time.time()
+                print(f"Method {method} need_compute_residual {need_compute_residual} time {et-st}")
+                all_results.append(et-st)
+        print(all_results)

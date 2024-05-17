@@ -1,7 +1,7 @@
 from diffusers import DiTPipeline, DPMSolverMultistepScheduler
 import torch
 import argparse
-from evaluation import evaluate_quantitative_scores,evaluate_quantitative_scores_text2img
+from evaluation import evaluate_quantitative_scores,evaluate_quantitative_scores_text2img,evaluate_latencies
 from dit_fast_attention import transform_model_fast_attention
 import os
 import json
@@ -19,16 +19,16 @@ def main():
     parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
     parser.add_argument("--coco_path", type=str, default="data/mscoco")
     parser.add_argument("--eval_n_images", type=int, default=5000)
-    parser.add_argument("--eval_batchsize", type=int, default=8)
+    parser.add_argument("--eval_batchsize", type=int, default=2)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--raw_eval", action="store_true")
     args = parser.parse_args()
 
-    if args.model=="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS":
+    if args.model in ["PixArt-alpha/PixArt-Sigma-XL-2-1024-MS","PixArt-alpha/PixArt-Sigma-XL-2-2K-MS"]:
         from diffusers import Transformer2DModel, PixArtSigmaPipeline
         transformer = Transformer2DModel.from_pretrained(
-            'PixArt-alpha/PixArt-Sigma-XL-2-1024-MS', 
+            args.model,
             subfolder='transformer', 
             torch_dtype=torch.float16,
             use_safetensors=True,
@@ -40,7 +40,10 @@ def main():
             torch_dtype=torch.float16,
             use_safetensors=True,
         )
+
+        
         pipe.to("cuda")
+        print(pipe,pipe.config)
     else:
         raise NotImplementedError
 
@@ -61,15 +64,16 @@ def main():
 
         fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_seq{args.sequential_calib}"
         
+    
+    macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
+    latencies=evaluate_latencies(pipe, args.n_steps,calib_x,bs=[1,])
     result = evaluate_quantitative_scores_text2img(
         pipe, args.eval_real_image_path, mscoco_anno, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
     )
-    macs=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
-    
     # save the result
     print(result)
     with open("output/results.txt", "a+") as f:
-        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\nmacs={macs}\n\n")
+        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n")
 
 
 if __name__ == "__main__":

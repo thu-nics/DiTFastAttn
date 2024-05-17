@@ -2,7 +2,7 @@ from diffusers import DiTPipeline, DPMSolverMultistepScheduler
 import torch
 import argparse
 from evaluation import evaluate_quantitative_scores,evaluate_latencies
-from dit_fast_attention import transform_model_fast_attention,speed_test
+from dit_fast_attention import transform_model_fast_attention
 import os
 from utils import calculate_flops
 

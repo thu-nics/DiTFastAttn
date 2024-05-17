@@ -139,43 +139,8 @@ def set_stepi_warpper(pipe):
         return pipe(*args, **kwargs)
 
     return wrapper
-
-def speed_test(pipe):
-    attn=pipe.transformer.transformer_blocks[0].attn1
-    all_results=[]
-    for seqlen in [1024,1024*4,1024*16]:
-        print(f"Test seqlen {seqlen}")
-        for method in ["ori","full_attn","full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
-        # for method in ["ori","full_attn","residual_window_attn","output_share"]:
-            if method=="ori":
-                attn.set_processor(AttnProcessor2_0())
-                attn.processor.need_compute_residual=[1]
-                need_compute_residuals=[False]
-            else:
-                attn.set_processor(FastAttnProcessor([0,0],[method]))
-                if "full_attn" in method:
-                    need_compute_residuals=[False,True]
-                else:
-                    need_compute_residuals=[False]
-            for need_compute_residual in need_compute_residuals:
-                attn.processor.need_compute_residual[0]=need_compute_residual
-                # warmup
-                x=torch.randn(2,seqlen,attn.query_dim).half().cuda()
-                for i in range(10):
-                    attn.stepi=0
-                    attn(x)
-                torch.cuda.synchronize()
-                st=time.time()
-                for i in range(1000):
-                    attn.stepi=0
-                    attn(x)
-                torch.cuda.synchronize()
-                et=time.time()
-                print(f"Method {method} need_compute_residual {need_compute_residual} time {et-st}")
-                all_results.append(et-st)
-        print(all_results)
             
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold=0.98, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
+def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warpper(raw_pipe)
     
     # calibration raw
@@ -183,7 +148,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
     raw_outs=np.concatenate(raw_outs,axis=0)
     
-    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}.pt"
+    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.pt"
     if use_cache and os.path.exists(cache_file):
         all_steps_method=torch.load(cache_file)
     else:
@@ -195,16 +160,26 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             attn.raw_processor=attn.processor
             attn.set_processor(AttnProcessor2_0())
         
-        all_steps_method=[]
+        all_steps_method=[["full_attn"]*n_steps for _ in range(len(pipe.transformer.transformer_blocks))]
         
+        # ssim_theshold for each calibration
+        ssim_thresholds=[]
+        all_steps=blocki*len(pipe.transformer.transformer_blocks)
+        
+        for step_i in range(n_steps):
+            sub_list=[]
+            for block_i in range(len(pipe.transformer.transformer_blocks)):
+                if sequential_calib:
+                    interval=(1-threshold)/all_steps
+                    sub_list.append(1-interval*(block_i*n_steps+step_i))
+                else:
+                    sub_list.append(threshold)
+            ssim_thresholds.append(sub_list)
+
         # greedy calibration 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             attn=block.attn1
-            if debug and blocki==1:
-                # DEBUG
-                all_steps_method*=len(pipe.transformer.transformer_blocks)
-                break
-            steps_method=["full_attn"]*n_steps
+            steps_method=all_steps_method[block_i]
             for step_i in range(1, n_steps):
                 selected_method="full_attn"
                 # for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
@@ -220,20 +195,21 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                     for i in range(raw_outs.shape[0]):
                         ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
                     ssim/=raw_outs.shape[0]
-                    print(f"Block {blocki} step {step_i} method={method} SSIM {ssim}" )
+                    print(f"Block {blocki} step {step_i} method={method} SSIM {ssim} target {ssim_thresholds[blocki][step_i]}" )
                     
-                    if ssim>threshold:
+                    if ssim>ssim_thresholds[blocki][step_i]:
                         selected_method=method
                 steps_method[step_i]=selected_method
             print(f"Block {blocki} selected steps_method {steps_method}")
+            processor=FastAttnProcessor(window_size,steps_method)
             if sequential_calib:
                 # independent calibration
                 processor=FastAttnProcessor(window_size,steps_method)
             else:
                 processor=AttnProcessor2_0()
-                
             attn.set_processor(processor)
-            all_steps_method.append(steps_method)
+                
+            
         
         # save cache
         if not os.path.exists("cache"):
