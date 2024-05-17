@@ -43,7 +43,6 @@ def main():
 
         
         pipe.to("cuda")
-        print(pipe,pipe.config)
     else:
         raise NotImplementedError
 

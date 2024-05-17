@@ -63,7 +63,9 @@ def count_flops_attn(m:Attention, i, o):
     assert matmul_ops>=0
     if not hasattr(m, "total_ops"):
         m.total_ops = torch.DoubleTensor([matmul_ops])
-    m.total_ops += torch.DoubleTensor([matmul_ops])
+    else:
+        m.total_ops += torch.DoubleTensor([matmul_ops])
+    global global_attn_count
     global_attn_count+=matmul_ops
 
 def profile_pipe_transformer(
@@ -140,7 +142,6 @@ def profile_pipe_transformer(
                 m_ops, m_params = m.total_ops.item(), m.total_params.item()
             else:
                 m_ops, m_params, next_dict = dfs_count(m, prefix=prefix + "\t")
-                m_ops+=m.total_ops.item()
             ret_dict[n] = (m_ops, m_params, next_dict)
             total_ops += m_ops
             total_params += m_params

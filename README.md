@@ -3,13 +3,14 @@
 
 # Install
 
-Upgrade your diffusers to make the PixArtSigmaPipeline available
 ```
-pip install git+https://github.com/huggingface/diffusers
+conda create -n difa python=3.10
 ```
 
+
 ```
-pip install torch diffusers pytorch_fid torchmetrics accelerate torchmetrics[image] flash-atten
+pip install torch numpy packaging
+pip install diffusers pytorch_fid torchmetrics accelerate torchmetrics[image]  flash-attn 
 ```
 
 # Usage

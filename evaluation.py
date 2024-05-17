@@ -64,8 +64,8 @@ def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    if os.path.exists(fake_image_path):
-        os.system(f"rm -rf {fake_image_path}")
+    # if os.path.exists(fake_image_path):
+    #     os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
     for i in range(0, n_images, batchsize):
         class_ids = np.random.randint(0, 1000, batchsize)
