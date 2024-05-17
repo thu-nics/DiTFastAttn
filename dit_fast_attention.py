@@ -257,84 +257,183 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     pipe = set_stepi_warp(raw_pipe)
     blocks=pipe.transformer.transformer_blocks
     
-    # evaluate sensitivity
-    sensitivity_cache_file=f"cache/sensitivity_{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}.pt"
-    if use_cache and os.path.exists(sensitivity_cache_file):
-        sensitivities=torch.load(sensitivity_cache_file)
+    # calibration raw
+    generator=torch.manual_seed(seed)
+    raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+    raw_outs=np.concatenate(raw_outs,axis=0)
+
+    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.pt"
+    
+    if use_cache and os.path.exists(cache_file):
+        all_steps_method=torch.load(cache_file)
     else:
+        # calibration
+        
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
             attn.raw_processor=attn.processor
-            attn.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
-            block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
-        # evaluate macs for full attn
-        full_attn_macs=[]
-        raw_total_macs=0
-        for blocki,block in enumerate(blocks):
-            handler_collection=set_profile_transformer_block_hook(block)
-            block.handler_collection=handler_collection
-        raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        raw_outs=np.concatenate(raw_outs,axis=0)
-        for blocki,block in enumerate(blocks):
-            macs,_=process_profile_transformer_block(block,block.handler_collection)
-            full_attn_macs.append(macs/n_steps)
-            raw_total_macs+=macs
+            attn.set_processor(AttnProcessor2_0())
         
-        sensitivities=eval_sensitivities(blocks,full_attn_macs,n_steps,pipe,calib_x,window_size,seed,raw_outs)
+        all_steps_method=[["full_attn" for __ in range(n_steps)] for _ in range(len(blocks))]
         
+        # ssim_theshold for each calibration
+        ssim_thresholds=[]
+        all_steps=blocki*len(blocks)
         
-        torch.save(sensitivities,sensitivity_cache_file)
-        # # test final ssim
-        # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        # outs=np.concatenate(outs,axis=0)
-        # ssim=0
-        # for i in range(raw_outs.shape[0]):
-        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-        # ssim/=raw_outs.shape[0]
-        # print(f"Final SSIM {ssim}")
-    
-    
-    
-    # binary search
-    # sort sensitivities
-    sorted_sensitivities=sorted(sensitivities,key=lambda x:x[-1])
-    st=0
-    ed=len(sensitivities)-1
-    frac_target=threshold
-    while ed-st>1:
-        mid=(st+ed)//2
-        blocks_methods={}
-        blocks_macs={}
-        for blocki,stepi,method,macs,ssim in sensitivities:
-            if (blocki,stepi,method,macs,ssim) in sorted_sensitivities[:mid]:
-                blocks_methods[(blocki,stepi)]="full_attn"
-                blocks_macs[(blocki,stepi)]=full_attn_macs[blocki]
+        for blocki in range(len(blocks)):
+            sub_list=[]
+            for step_i in range(n_steps):
+                if sequential_calib:
+                    interval=(1-threshold)/all_steps
+                    sub_list.append(1-interval*(blocki*n_steps+step_i))
+                else:
+                    sub_list.append(threshold)
+            ssim_thresholds.append(sub_list)
+
+        # greedy calibration 
+        for blocki, block in enumerate(blocks):
+            attn=block.attn1
+            steps_method=all_steps_method[blocki]
+            for step_i in range(1, n_steps):
+                selected_method="full_attn"
+                for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+                # for method in ["residual_window_attn","output_share"]:
+                    steps_method[step_i]=method
+                    # TODO search widnow_size
+                    processor=FastAttnProcessor(window_size,steps_method)
+                    attn.set_processor(processor)
+                    block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
+                    # compute output
+                    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+                    outs=np.concatenate(outs,axis=0)
+                    ssim=0
+                    for i in range(raw_outs.shape[0]):
+                        ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+                    ssim/=raw_outs.shape[0]
+                    print(f"Block {blocki} step {step_i} method={method} SSIM {ssim} target {ssim_thresholds[blocki][step_i]}" )
+                    
+                    if ssim>ssim_thresholds[blocki][step_i]:
+                        selected_method=method
+                steps_method[step_i]=selected_method
+            print(f"Block {blocki} selected steps_method {steps_method}")
+            if sequential_calib:
+                # independent calibration
+                processor=FastAttnProcessor(window_size,steps_method)
             else:
-                blocks_methods[(blocki,stepi)]=method
-                blocks_macs[(blocki,stepi)]=macs
-        total_macs=sum(blocks_macs.values())
-        frac=total_macs/raw_total_macs
-        if frac>frac_target:
-            ed=mid
-        else:
-            st=mid
-    for blocki,block in enumerate(blocks):
-        attn=block.attn1
-        processor=FastAttnProcessor(window_size,[blocks_methods[(blocki,stepi)] for stepi in range(n_steps)])
-        print(f"Block {blocki} method {processor.steps_method}")
-        attn.set_processor(processor)
-        block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
-    print(f"Final MAC Frac {frac}")
+                processor=AttnProcessor2_0()
+                processor.steps_method=["full_attn" for _ in range(n_steps)]
+            attn.set_processor(processor)
+            block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
         
+        # save cache
+        if not os.path.exists("cache"):
+            os.makedirs("cache")
+        torch.save(all_steps_method,cache_file)
+    
+    # set processor
+    for blocki, block in enumerate(blocks):
+        attn: Attention = block.attn1
+        attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
+        block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
+    
     # statistics
-    counts=collections.Counter([method for block in blocks for method in block.attn1.processor.steps_method])
+    counts=collections.Counter([method for steps_method in all_steps_method for method in steps_method])
     # print(f"Counts {counts}")
     # compute fraction
     total=sum(counts.values())
     for k,v in counts.items():
         print(f"{k} {v/total}")
 
-    
+    # test final ssim
+    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+    outs=np.concatenate(outs,axis=0)
+    ssim=0
+    for i in range(raw_outs.shape[0]):
+        ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+    ssim/=raw_outs.shape[0]
+    print(f"Final SSIM {ssim}")
 
     return pipe,ssim
+    
+    # # evaluate sensitivity
+    # sensitivity_cache_file=f"cache/sensitivity_{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}.pt"
+    # if use_cache and os.path.exists(sensitivity_cache_file):
+    #     sensitivities=torch.load(sensitivity_cache_file)
+    # else:
+    #     # reset all processors
+    #     for blocki, block in enumerate(blocks):
+    #         attn: Attention = block.attn1
+    #         attn.raw_processor=attn.processor
+    #         attn.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
+    #         block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
+    #     # evaluate macs for full attn
+    #     full_attn_macs=[]
+    #     raw_total_macs=0
+    #     for blocki,block in enumerate(blocks):
+    #         handler_collection=set_profile_transformer_block_hook(block)
+    #         block.handler_collection=handler_collection
+    #     raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+    #     raw_outs=np.concatenate(raw_outs,axis=0)
+    #     for blocki,block in enumerate(blocks):
+    #         macs,_=process_profile_transformer_block(block,block.handler_collection)
+    #         full_attn_macs.append(macs/n_steps)
+    #         raw_total_macs+=macs
+        
+    #     sensitivities=eval_sensitivities(blocks,full_attn_macs,n_steps,pipe,calib_x,window_size,seed,raw_outs)
+        
+        
+    #     torch.save(sensitivities,sensitivity_cache_file)
+    #     # # test final ssim
+    #     # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+    #     # outs=np.concatenate(outs,axis=0)
+    #     # ssim=0
+    #     # for i in range(raw_outs.shape[0]):
+    #     #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+    #     # ssim/=raw_outs.shape[0]
+    #     # print(f"Final SSIM {ssim}")
+    
+    
+    
+    # # binary search
+    # # sort sensitivities
+    # sorted_sensitivities=sorted(sensitivities,key=lambda x:x[-1])
+    # st=0
+    # ed=len(sensitivities)-1
+    # frac_target=threshold
+    # while ed-st>1:
+    #     mid=(st+ed)//2
+    #     blocks_methods={}
+    #     blocks_macs={}
+    #     for blocki,stepi,method,macs,ssim in sensitivities:
+    #         if (blocki,stepi,method,macs,ssim) in sorted_sensitivities[:mid]:
+    #             blocks_methods[(blocki,stepi)]="full_attn"
+    #             blocks_macs[(blocki,stepi)]=full_attn_macs[blocki]
+    #         else:
+    #             blocks_methods[(blocki,stepi)]=method
+    #             blocks_macs[(blocki,stepi)]=macs
+    #     total_macs=sum(blocks_macs.values())
+    #     frac=total_macs/raw_total_macs
+    #     if frac>frac_target:
+    #         ed=mid
+    #     else:
+    #         st=mid
+    # for blocki,block in enumerate(blocks):
+    #     attn=block.attn1
+    #     processor=FastAttnProcessor(window_size,[blocks_methods[(blocki,stepi)] for stepi in range(n_steps)])
+    #     print(f"Block {blocki} method {processor.steps_method}")
+    #     attn.set_processor(processor)
+    #     block.ff=FastFeedForward(block.ff.net,attn.processor.steps_method)
+    # print(f"Final MAC Frac {frac}")
+        
+    # # statistics
+    # counts=collections.Counter([method for block in blocks for method in block.attn1.processor.steps_method])
+    # # print(f"Counts {counts}")
+    # # compute fraction
+    # total=sum(counts.values())
+    # for k,v in counts.items():
+    #     print(f"{k} {v/total}")
+
+    
+
+    # return pipe,ssim
