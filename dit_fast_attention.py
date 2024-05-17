@@ -160,7 +160,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             attn.raw_processor=attn.processor
             attn.set_processor(AttnProcessor2_0())
         
-        all_steps_method=[["full_attn"]*n_steps for _ in range(len(pipe.transformer.transformer_blocks))]
+        all_steps_method=[["full_attn" for __ in range(n_steps)] for _ in range(len(pipe.transformer.transformer_blocks))]
         
         # ssim_theshold for each calibration
         ssim_thresholds=[]
@@ -168,10 +168,10 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         
         for step_i in range(n_steps):
             sub_list=[]
-            for block_i in range(len(pipe.transformer.transformer_blocks)):
+            for blocki in range(len(pipe.transformer.transformer_blocks)):
                 if sequential_calib:
                     interval=(1-threshold)/all_steps
-                    sub_list.append(1-interval*(block_i*n_steps+step_i))
+                    sub_list.append(1-interval*(blocki*n_steps+step_i))
                 else:
                     sub_list.append(threshold)
             ssim_thresholds.append(sub_list)
@@ -179,7 +179,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         # greedy calibration 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             attn=block.attn1
-            steps_method=all_steps_method[block_i]
+            steps_method=all_steps_method[blocki]
             for step_i in range(1, n_steps):
                 selected_method="full_attn"
                 # for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
@@ -201,7 +201,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                         selected_method=method
                 steps_method[step_i]=selected_method
             print(f"Block {blocki} selected steps_method {steps_method}")
-            processor=FastAttnProcessor(window_size,steps_method)
             if sequential_calib:
                 # independent calibration
                 processor=FastAttnProcessor(window_size,steps_method)
