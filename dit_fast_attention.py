@@ -224,8 +224,8 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         
         # ssim_theshold for each calibration
         ssim_thresholds=[]
-        interval=(1-threshold)/len(blocks)/2
-        now_threshold=1-interval*len(blocks)
+        interval=(1-threshold)/len(blocks)
+        now_threshold=1
         for blocki in range(len(blocks)):
             now_threshold-=interval
             ssim_thresholds.append(now_threshold)
