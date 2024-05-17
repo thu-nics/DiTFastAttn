@@ -40,6 +40,7 @@ def main():
             torch_dtype=torch.float16,
             use_safetensors=True,
         )
+        pipe.config._name_or_path=args.model
 
         
         pipe.to("cuda")

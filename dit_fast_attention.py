@@ -35,6 +35,7 @@ class FastAttnProcessor:
         return need_compute_residual
     
     def run_forward_method(self,attn,hidden_states,encoder_hidden_states,attention_mask,temb,method):
+        residual = hidden_states
         if method=="output_share":
             hidden_states = attn.cached_output
         else:
@@ -116,6 +117,10 @@ class FastAttnProcessor:
                 hidden_states = torch.cat([hidden_states, hidden_states], dim=0)
             
             attn.cached_output = hidden_states
+        
+        if attn.residual_connection:
+            hidden_states = hidden_states + residual
+        
         return hidden_states
     
     def __call__(
@@ -146,8 +151,8 @@ class FastAttnProcessor:
             self.need_compute_residual[attn.stepi]=True
         hidden_states=self.run_forward_method(attn,hidden_states,encoder_hidden_states,attention_mask,temb,self.steps_method[attn.stepi])
         
-        if attn.residual_connection:
-            hidden_states = hidden_states + residual
+        # if attn.residual_connection:
+        #     hidden_states = hidden_states + residual
 
         hidden_states = hidden_states / attn.rescale_output_factor
         
@@ -204,6 +209,9 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.pt"
     if use_cache and os.path.exists(cache_file):
         all_steps_method=torch.load(cache_file)
+        for blocki, block in enumerate(blocks):
+            attn: Attention = block.attn1
+            attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
     else:
         
         # reset all processors
@@ -231,7 +239,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                 attn.cached_input=input[0]
             
             # binary search
-            cos_sim_threshold_st=0.8
+            cos_sim_threshold_st=0.95
             cos_sim_threshold_ed=1
             n_search=6
             for searchi in range(n_search):
@@ -270,9 +278,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         torch.save(all_steps_method,cache_file)
     
     # set processor
-    # for blocki, block in enumerate(blocks):
-    #     attn: Attention = block.attn1
-    #     attn.set_processor(FastAttnProcessor(window_size,all_steps_method[blocki]))
+    # 
     
     # statistics
     counts=collections.Counter([method for block in blocks for method in block.attn1.processor.steps_method])
