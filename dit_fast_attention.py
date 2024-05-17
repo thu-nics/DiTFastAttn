@@ -43,7 +43,13 @@ class FastAttnProcessor:
         if method=="output_share":
             hidden_states = attn.cached_output
         else:
-        
+            
+            if "cfg_attn_share" in method:
+                batch_size=hidden_states.shape[0]
+                hidden_states = hidden_states[:batch_size//2]
+                if encoder_hidden_states is not None:
+                    encoder_hidden_states = encoder_hidden_states[:batch_size//2]
+            
             if attn.spatial_norm is not None:
                 hidden_states = attn.spatial_norm(hidden_states, temb)
 
@@ -67,25 +73,14 @@ class FastAttnProcessor:
                 hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
             
-            if "cfg_attn_share" in method:
-                query = attn.to_q(hidden_states[:batch_size//2])
-                #TODO replace flash-attn implmentation
-                query=torch.cat([query,query],dim=0)
-                
-            else:
-                query = attn.to_q(hidden_states)
+            query = attn.to_q(hidden_states)
 
             if encoder_hidden_states is None:
                 encoder_hidden_states = hidden_states
             elif attn.norm_cross:
                 encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-            if "cfg_attn_share" in method:
-                key = attn.to_k(encoder_hidden_states[:batch_size//2])
-                #TODO replace flash-attn implmentation
-                key=torch.cat([key,key],dim=0)
-            else:
-                key = attn.to_k(encoder_hidden_states)
+            key = attn.to_k(encoder_hidden_states)
             value = attn.to_v(encoder_hidden_states)
 
             inner_dim = key.shape[-1]
@@ -101,11 +96,13 @@ class FastAttnProcessor:
                 if self.need_compute_residual[attn.stepi]:
                     w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
                     residual=all_hidden_states-w_hidden_states
+                    if "cfg_attn_share" in method:
+                        residual=torch.cat([residual, residual], dim=0)
                     attn.cached_residual=residual
                 hidden_states=all_hidden_states
             elif "residual_window_attn" in method:
                 w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
-                hidden_states=w_hidden_states+attn.cached_residual.view_as(w_hidden_states)
+                hidden_states=w_hidden_states+attn.cached_residual[:batch_size].view_as(w_hidden_states)
             
 
             hidden_states = hidden_states.reshape(batch_size, -1, attn.heads * head_dim)
@@ -118,6 +115,11 @@ class FastAttnProcessor:
 
             if input_ndim == 4:
                 hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            
+
+            if "cfg_attn_share" in method:
+                hidden_states = torch.cat([hidden_states, hidden_states], dim=0)
+            
             attn.cached_output = hidden_states
 
         if attn.residual_connection:
@@ -183,8 +185,8 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             steps_method=all_steps_method[blocki]
             for step_i in range(1, n_steps):
                 selected_method="full_attn"
-                # for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
-                for method in ["residual_window_attn","output_share"]:
+                for method in ["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]:
+                # for method in ["residual_window_attn","output_share"]:
                     steps_method[step_i]=method
                     # TODO search widnow_size
                     processor=FastAttnProcessor(window_size,steps_method)
