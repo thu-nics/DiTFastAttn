@@ -64,8 +64,8 @@ def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    # if os.path.exists(fake_image_path):
-    #     os.system(f"rm -rf {fake_image_path}")
+    if os.path.exists(fake_image_path):
+        os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
     for i in range(0, n_images, batchsize):
         class_ids = np.random.randint(0, 1000, batchsize)
@@ -102,15 +102,15 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    # if os.path.exists(fake_image_path):
-    #     os.system(f"rm -rf {fake_image_path}")
+    if os.path.exists(fake_image_path):
+        os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
     for index in range(0, n_images, batchsize):
         
         slice = mscoco_anno['annotations'][index:index+batchsize]
         filename_list = [str(d['id']).zfill(12) for d in slice]
-        if f"{filename_list[0]}.jpg" in os.listdir(fake_image_path):
-            continue
+        # if f"{filename_list[0]}.jpg" in os.listdir(fake_image_path):
+        #     continue
         print(f"Processing {index}th image")
         caption_list = [d['caption'] for d in slice]
         output = pipe(caption_list, generator = generator, output_type="np",num_inference_steps=num_inference_steps)
