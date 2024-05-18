@@ -193,7 +193,13 @@ def set_stepi_warp(pipe):
                 layer.cached_residual=None
                 layer.cached_output=None
             # print(f"Reset stepi to 0 for block {blocki}")
-        return pipe(*args, **kwargs)
+        out=pipe(*args, **kwargs)
+        for blocki, block in enumerate(pipe.transformer.transformer_blocks):
+            for layer in block.children():
+                layer.stepi=0
+                layer.cached_residual=None
+                layer.cached_output=None
+        return out
 
     return wrapper
 
@@ -253,6 +259,7 @@ def eval_sensitivities_dist(blocks,full_attn_macs,n_steps,pipe,calib_x,window_si
                 print(f"Block {blocki} step {stepi} method {method} SSIM {ssim} macs {macs}")
     return sensitivities
 
+@torch.no_grad()
 def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
     pipe = set_stepi_warp(raw_pipe)
     blocks=pipe.transformer.transformer_blocks
@@ -346,13 +353,14 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         print(f"{k} {v/total}")
 
     # test final ssim
-    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-    outs=np.concatenate(outs,axis=0)
-    ssim=0
-    for i in range(raw_outs.shape[0]):
-        ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-    ssim/=raw_outs.shape[0]
-    print(f"Final SSIM {ssim}")
+    # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+    # outs=np.concatenate(outs,axis=0)
+    # ssim=0
+    # for i in range(raw_outs.shape[0]):
+    #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+    # ssim/=raw_outs.shape[0]
+    # print(f"Final SSIM {ssim}")
+    ssim=None
 
     return pipe,ssim
     
