@@ -145,16 +145,19 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     is_transform_ff=False
     print(f"Transform ff {is_transform_ff}")
     
-    # calibration raw
-    generator=torch.manual_seed(seed)
-    raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
-    raw_outs=np.concatenate(raw_outs,axis=0)
+    
 
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.json"
     print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
         blocks_methods=torch.load(cache_file)
+        ssim=None
     else:
+        # calibration raw
+        generator=torch.manual_seed(seed)
+        raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+        raw_outs=np.concatenate(raw_outs,axis=0)
+        
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
@@ -212,6 +215,15 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         if not os.path.exists("cache"):
             os.makedirs("cache")
         torch.save(blocks_methods,cache_file)
+        
+        # test final ssim
+        # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+        # outs=np.concatenate(outs,axis=0)
+        # ssim=0
+        # for i in range(raw_outs.shape[0]):
+        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+        # ssim/=raw_outs.shape[0]
+        # print(f"Final SSIM {ssim}")
     
     # set processor
     for blocki, block in enumerate(blocks):
@@ -238,15 +250,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         for k,v in counts.items():
             print(f"ff {k} {v/total}")
 
-    # test final ssim
-    outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-    outs=np.concatenate(outs,axis=0)
-    ssim=0
-    for i in range(raw_outs.shape[0]):
-        ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-    ssim/=raw_outs.shape[0]
-    print(f"Final SSIM {ssim}")
-    # ssim=None
+    
 
     return pipe,ssim
     
