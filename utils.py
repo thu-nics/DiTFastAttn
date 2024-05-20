@@ -5,7 +5,7 @@ import thop
 from thop.profile import *
 
 
-def count_flops_attn(m:Attention, i, o):
+def count_flops_attn(m:Attention, i, kwargs, o):
     hidden_states=i[0]
     encoder_hidden_states=None
     if len(i)>1:
@@ -13,6 +13,10 @@ def count_flops_attn(m:Attention, i, o):
     if len(i)>2:
         attention_mask=i[2]
         assert attention_mask is None
+    if kwargs.get("encoder_hidden_states",None) is not None:
+        encoder_hidden_states=kwargs["encoder_hidden_states"]
+    if kwargs.get("attention_mask",None) is not None:
+        attention_mask=kwargs["attention_mask"]
     
     input_ndim = hidden_states.ndim
 
@@ -168,11 +172,13 @@ def profile_pipe_transformer(
         m_type = type(m)
 
         fn = None
+        with_kwargs=False
         if m_type in custom_ops:
             # if defined both op maps, use custom_ops to overwrite.
             fn = custom_ops[m_type]
             if m_type not in types_collection and verbose:
                 print("[INFO] Customize rule %s() %s." % (fn.__qualname__, m_type))
+            with_kwargs=True
         elif m_type in register_hooks:
             fn = register_hooks[m_type]
             if m_type not in types_collection and verbose:
@@ -186,7 +192,7 @@ def profile_pipe_transformer(
 
         if fn is not None:
             handler_collection[m] = (
-                m.register_forward_hook(fn),
+                m.register_forward_hook(fn,with_kwargs=with_kwargs),
                 m.register_forward_hook(count_parameters),
             )
         types_collection.add(m_type)
@@ -200,9 +206,11 @@ def profile_pipe_transformer(
         pipe(*inputs,**kwargs)
 
     attn_ops=0
+    attn2_ops=0
     def dfs_count(module: nn.Module, prefix="\t"):
         total_ops, total_params = module.total_ops.item(), 0
         ret_dict = {}
+        
         for n, m in module.named_children():
             # if not hasattr(m, "total_ops") and not hasattr(m, "total_params"):  # and len(list(m.children())) > 0:
             #     m_ops, m_params = dfs_count(m, prefix=prefix + "\t")
@@ -224,8 +232,13 @@ def profile_pipe_transformer(
     total_ops, total_params, ret_dict = dfs_count(model)
     
     for name,module in model.named_modules():
-        if isinstance(module,Attention):
+        if isinstance(module,Attention) and "attn1" in name:
             attn_ops+=module.total_ops.item()
+            # print(f"attn1 {name} ops is {module.total_ops.item()}")
+            
+        if isinstance(module,Attention) and "attn2" in name:
+            attn2_ops+=module.total_ops.item()
+            # print(f"attn2 {name} ops is {module.total_ops.item()}")
 
     # reset model to original status
     model.train(prev_training_status)
@@ -235,11 +248,11 @@ def profile_pipe_transformer(
         m._buffers.pop("total_ops")
         m._buffers.pop("total_params")
 
-    return total_ops, total_params,attn_ops
+    return total_ops, total_params,attn_ops,attn2_ops
 
 
 def calculate_flops(pipe,x, n_steps):
-    macs, params,attn_ops = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
+    macs, params,attn_ops,attn2_ops = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
                         custom_ops={Attention: count_flops_attn},verbose=0,ret_layer_info=True)
-    print(f"macs is {macs/1e9}G, attn is {(attn_ops)/1e9}G")
+    print(f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G")
     return macs/1e9,attn_ops/1e9
