@@ -4,12 +4,10 @@ from typing import Optional
 import torch.nn.functional as F
 import flash_attn
 import torch.nn as nn
-import xformers.components.attention
 
 class FastAttnProcessor:
     def __init__(self, window_size,steps_method):
         self.window_size=window_size
-        self.window_attn=xformers.components.attention.LocalAttention(window_size=window_size[1]-window_size[0]+1)
         self.steps_method=steps_method
         self.need_compute_residual=self.compute_need_compute_residual(steps_method)
         self.need_cache_output=True
