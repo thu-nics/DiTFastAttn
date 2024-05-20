@@ -1,7 +1,7 @@
 from diffusers import DiTPipeline, DPMSolverMultistepScheduler
 import torch
 import argparse
-from evaluation import evaluate_quantitative_scores,evaluate_quantitative_scores_text2img,evaluate_latencies
+from evaluation import evaluate_quantitative_scores,evaluate_quantitative_scores_text2img,test_latencies
 from dit_fast_attention import transform_model_fast_attention
 import os
 import json
@@ -66,7 +66,7 @@ def main():
         
     
     macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
-    latencies=evaluate_latencies(pipe, args.n_steps,calib_x,bs=[1,])
+    latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[1,])
     result = evaluate_quantitative_scores_text2img(
         pipe, args.eval_real_image_path, mscoco_anno, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
     )

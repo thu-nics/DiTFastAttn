@@ -18,6 +18,7 @@ in_refmodel/Vector/main
 cache
 .env.sh
 repositories
+*.png
 
 __pycache__/
 output/

@@ -151,7 +151,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     raw_outs=np.concatenate(raw_outs,axis=0)
 
     cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.json"
-    
+    print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
         blocks_methods=torch.load(cache_file)
     else:

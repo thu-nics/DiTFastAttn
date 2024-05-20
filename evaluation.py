@@ -1,6 +1,7 @@
 from torchvision.transforms import functional as F
 import torch.nn.functional
 import torch
+import torch.nn as nn
 import numpy as np
 from PIL import Image
 import os
@@ -44,17 +45,54 @@ def preprocess_image(image):
     image = torch.tensor(image).unsqueeze(0)
     image = image.permute(0, 3, 1, 2) / 255.0
     return F.center_crop(image, (256, 256))
-
-def evaluate_latencies(pipe, n_steps,calib_x,bs):
+    
+def save_output_hook(m,i,o):
+    m.saved_output=o
+def test_latencies(pipe, n_steps,calib_x,bs,only_transformer=True,test_attention=True):
     latencies={}
     for b in bs:
+        pipe([calib_x[0] for _ in range(b)],num_inference_steps=n_steps)
         st=time.time()
-        for i in range(10):
+        for i in range(3):
             pipe([calib_x[0] for _ in range(b)],num_inference_steps=n_steps)
         ed=time.time()
-        print(f"average time for 1 inference: {(ed-st)/10}")
-        t= (ed-st)/10
-        latencies[b]=t
+        t= (ed-st)/3
+        if only_transformer:
+            
+            handler=pipe.transformer.register_forward_hook(save_output_hook)
+            pipe([calib_x[0] for _ in range(b)],num_inference_steps=1)
+            handler.remove()
+            old_forward=pipe.transformer.forward
+            pipe.transformer.forward=lambda *arg,**kwargs:pipe.transformer.saved_output
+            st=time.time()
+            for i in range(3):
+                pipe([calib_x[0] for _ in range(b)],num_inference_steps=n_steps)
+            ed=time.time()
+            t_other=(ed-st)/3
+            pipe.transformer.forward=old_forward
+            del pipe.transformer.saved_output
+            print(f"average time for other bs={b} inference: {t_other}")
+            latencies[f"{b}_other"]=t_other
+            latencies[f"{b}_transformer"]=t-t_other
+        print(f"average time for bs={b} inference: {t}")
+        latencies[f"{b}_all"]=t
+        
+        if test_attention:
+            for name,module in pipe.transformer.named_modules():
+                if isinstance(module,Attention) and "attn1" in name:
+                    module.old_forward=module.forward
+                    module.forward=lambda *arg,**kwargs:arg[0]
+            st=time.time()
+            for i in range(3):
+                pipe([calib_x[0] for _ in range(b)],num_inference_steps=n_steps)
+            ed=time.time()
+            t_other2=(ed-st)/3
+            for name,module in pipe.transformer.named_modules():
+                if isinstance(module,Attention) and "attn1" in name:
+                    module.forward=module.old_forward
+            t_attn=t-t_other2
+            print(f"average time for attn bs={b} inference: {t_attn}")
+            latencies[f"{b}_attn"]=t_attn
     return latencies
 
 def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images"):

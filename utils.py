@@ -199,6 +199,7 @@ def profile_pipe_transformer(
     with torch.no_grad():
         pipe(*inputs,**kwargs)
 
+    attn_ops=0
     def dfs_count(module: nn.Module, prefix="\t"):
         total_ops, total_params = module.total_ops.item(), 0
         ret_dict = {}
@@ -221,6 +222,10 @@ def profile_pipe_transformer(
         return total_ops, total_params, ret_dict
 
     total_ops, total_params, ret_dict = dfs_count(model)
+    
+    for name,module in model.named_modules():
+        if isinstance(module,Attention):
+            attn_ops+=module.total_ops.item()
 
     # reset model to original status
     model.train(prev_training_status)
@@ -230,15 +235,11 @@ def profile_pipe_transformer(
         m._buffers.pop("total_ops")
         m._buffers.pop("total_params")
 
-    if ret_layer_info:
-        return total_ops, total_params, ret_dict
-    return total_ops, total_params
+    return total_ops, total_params,attn_ops
 
 
 def calculate_flops(pipe,x, n_steps):
-    macs_without_attn, params, ret_dict = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},verbose=0,ret_layer_info=True)
-    macs, params,ret_dict2 = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
+    macs, params,attn_ops = profile_pipe_transformer(pipe, inputs=(x, ), kwargs={"num_inference_steps": n_steps},
                         custom_ops={Attention: count_flops_attn},verbose=0,ret_layer_info=True)
-    print(f"macs is {macs/1e9}G, macs_without_attn is {macs_without_attn/1e9}G, attn is {(macs-macs_without_attn)/1e9}G")
-    attn_mac=(macs-macs_without_attn)
-    return macs/1e9,attn_mac/1e9
+    print(f"macs is {macs/1e9}G, attn is {(attn_ops)/1e9}G")
+    return macs/1e9,attn_ops/1e9

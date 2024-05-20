@@ -4,11 +4,12 @@ from typing import Optional
 import torch.nn.functional as F
 import flash_attn
 import torch.nn as nn
-
+import xformers.components.attention
 
 class FastAttnProcessor:
     def __init__(self, window_size,steps_method):
         self.window_size=window_size
+        self.window_attn=xformers.components.attention.LocalAttention(window_size=window_size[1]-window_size[0]+1)
         self.steps_method=steps_method
         self.need_compute_residual=self.compute_need_compute_residual(steps_method)
         self.need_cache_output=True
@@ -91,6 +92,9 @@ class FastAttnProcessor:
             elif "full_attn" in method:
                 all_hidden_states=flash_attn.flash_attn_func(query, key, value)
                 if self.need_compute_residual[attn.stepi]:
+                    # w_hidden_states = self.window_attn(
+                    #     query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+                    # ).transpose(1, 2)
                     w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
                     residual=all_hidden_states-w_hidden_states
                     if "cfg_attn_share" in method:
@@ -98,6 +102,9 @@ class FastAttnProcessor:
                     attn.cached_residual=residual
                 hidden_states=all_hidden_states
             elif "residual_window_attn" in method:
+                # w_hidden_states = self.window_attn(
+                #         query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+                #     ).transpose(1, 2)
                 w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
                 hidden_states=w_hidden_states+attn.cached_residual[:batch_size].view_as(w_hidden_states)
             
