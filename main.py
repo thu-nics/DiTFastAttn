@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--model", type=str, default="facebook/DiT-XL-2-512")
     parser.add_argument("--n_calib", type=int, default=4)
     parser.add_argument("--n_steps", type=int, default=20)
-    parser.add_argument("--threshold", type=float, default=0.9)
+    parser.add_argument("--threshold", type=float, default=1)
     parser.add_argument("--window_size", type=int, default=128)
     parser.add_argument("--sequential_calib", action="store_true")
     parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
@@ -34,7 +34,7 @@ def main():
         fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}"
         
     macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
-    latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[1])
+    latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[8])
     if not args.debug:
         result = evaluate_quantitative_scores(
             pipe, args.eval_real_image_path, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path

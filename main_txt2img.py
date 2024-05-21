@@ -13,7 +13,7 @@ def main():
     parser.add_argument("--model", type=str, default="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS")
     parser.add_argument("--n_calib", type=int, default=8)
     parser.add_argument("--n_steps", type=int, default=20)
-    parser.add_argument("--threshold", type=float, default=0.98)
+    parser.add_argument("--threshold", type=float, default=1)
     parser.add_argument("--window_size", type=int, default=64)
     parser.add_argument("--sequential_calib", action="store_true")
     parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
@@ -67,9 +67,12 @@ def main():
     
     macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
     latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[1,])
-    result = evaluate_quantitative_scores_text2img(
-        pipe, args.eval_real_image_path, mscoco_anno, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
-    )
+    if args.debug:
+        result={}
+    else:
+        result = evaluate_quantitative_scores_text2img(
+            pipe, args.eval_real_image_path, mscoco_anno, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
+        )
     # save the result
     print(result)
     with open("output/results.txt", "a+") as f:
