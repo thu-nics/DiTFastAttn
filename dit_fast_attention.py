@@ -73,7 +73,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
             if attn is None or not isinstance(attn.processor, FastAttnProcessor):
                 continue
             if attni==0:
-                method_candidates=["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]
+                method_candidates=block.method_candidates
             else:
                 method_candidates=["full_attn+cfg_attn_share","output_share"]
             selected_method="full_attn"
@@ -134,7 +134,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
         block.attn1.processor.need_cache_output=True
 
 @torch.no_grad()
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False):
+def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False,ablation=""):
     pipe = set_stepi_warp(raw_pipe)
     blocks=pipe.transformer.transformer_blocks
     transformer:Transformer2DModel=pipe.transformer
@@ -146,8 +146,10 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     print(f"Transform ff {is_transform_ff}")
     
     
-
-    cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.json"
+    if ablation=="":
+        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.json"
+    else:
+        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{ablation}.json"
     print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
         blocks_methods=torch.load(cache_file)
@@ -161,6 +163,10 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
+            if ablation=="":
+                block.method_candidates=ablation.split(',')
+            else:
+                block.method_candidates=["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]
             block.attn1.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
             block.attn1.processor.need_compute_residual=[True for _ in range(n_steps)]
             if is_transform_attn2:
