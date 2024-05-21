@@ -132,7 +132,7 @@ def evaluate_quantitative_scores(pipe,real_image_path,n_images=5000,batchsize=1,
     print(f"FID: {fid_value}")
     return results
 
-def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images"):
+def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_images=5000,batchsize=1,seed=3,num_inference_steps=20,fake_image_path="output/fake_images",reuse_generated=True):
     results={}
     # Inception Score
     inception = InceptionScore()
@@ -140,7 +140,7 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
-    if os.path.exists(fake_image_path):
+    if os.path.exists(fake_image_path) and not reuse_generated:
         os.system(f"rm -rf {fake_image_path}")
     os.makedirs(fake_image_path, exist_ok=True)
     for index in range(0, n_images, batchsize):
@@ -151,20 +151,35 @@ def evaluate_quantitative_scores_text2img(pipe,real_image_path, mscoco_anno,n_im
         #     continue
         print(f"Processing {index}th image")
         caption_list = [d['caption'] for d in slice]
-        output = pipe(caption_list, generator = generator, output_type="np",num_inference_steps=num_inference_steps)
+        torch_images=[]
+        for filename in filename_list:
+            image_file=f"{fake_image_path}/{filename}.jpg"
+            if os.path.exists(image_file):
+                image=Image.open(image_file)
+                image_np=np.array(image)
+                torch_image=torch.tensor(image_np).unsqueeze(0).permute(0,3,1,2)
+                torch_images.append(torch_image)
+        if len(torch_images)>0:
+            torch_images=torch.cat(torch_images,dim=0)
+            print(torch_images.shape)
+            torch_images=torch.nn.functional.interpolate(torch_images, size=(256, 256), mode='bilinear', align_corners=False)
+            inception.update(torch_images)
+            clip.update(torch_images, caption_list[:len(torch_images)])
+        else:
+            output = pipe(caption_list, generator = generator, output_type="np",num_inference_steps=num_inference_steps)
         # output = pipe(caption_list, generator = generator)
-        fake_images = output.images
-        # Inception Score
-        count = 0
-        torch_images=torch.Tensor(fake_images*255).byte().permute(0,3,1,2).contiguous()
-        torch_images=torch.nn.functional.interpolate(torch_images, size=(256, 256), mode='bilinear', align_corners=False)
-        inception.update(torch_images)
-        clip.update(torch_images, caption_list)
-        for j, image in enumerate(fake_images):
-            #image = image.astype(np.uint8)
-            image = F.to_pil_image((image * 255).astype(np.uint8))
-            image.save(f"{fake_image_path}/{filename_list[count]}.jpg")
-            count += 1
+            fake_images = output.images
+            # Inception Score
+            count = 0
+            torch_images=torch.Tensor(fake_images*255).byte().permute(0,3,1,2).contiguous()
+            torch_images=torch.nn.functional.interpolate(torch_images, size=(256, 256), mode='bilinear', align_corners=False)
+            inception.update(torch_images)
+            clip.update(torch_images, caption_list)
+            for j, image in enumerate(fake_images):
+                #image = image.astype(np.uint8)
+                image = F.to_pil_image((image * 255).astype(np.uint8))
+                image.save(f"{fake_image_path}/{filename_list[count]}.jpg")
+                count += 1
     
     IS=inception.compute()
     CLIP = clip.compute()
