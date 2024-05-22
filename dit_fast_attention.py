@@ -32,8 +32,14 @@ def set_stepi_warp(pipe):
     return wrapper
 
 def mse_similarity(a,b):
-    diff=(a-b)/(torch.max(a,b)+1e-6)
-    return 1-diff.abs().clip(0,10).mean()
+    sims=[]
+    for ai,bi in zip(a,b):
+        if isinstance(ai,torch.Tensor):
+            diff=(ai-bi)/(torch.max(ai,bi)+1e-6)
+            sim=1-diff.abs().clip(0,10).mean()
+            sims.append(sim)
+    sim=sum(sims)/len(sims)
+    return sim
 
 
 from diffusers.models.transformers.transformer_2d import Transformer2DModel
@@ -42,7 +48,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
     for blocki,block in enumerate(m.transformer_blocks):
         block.attn1.processor.need_compute_residual[now_stepi]=False
         block.attn1.processor.need_cache_output=False
-    raw_outs=m.forward(*args, **kwargs)[0]
+    raw_outs=m.forward(*args, **kwargs)
     # raw_outs_im=sample_noise_output(raw_outs,m.pipe,args[0],4,kwargs["timestep"].flatten()[0])
     for blocki,block in enumerate(m.transformer_blocks):
         if now_stepi==0:
@@ -52,9 +58,10 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
             if attn is None or not isinstance(attn.processor, FastAttnProcessor):
                 continue
             if attni==0:
+                # default methods are ['output_share', 'residual_window_attn+cfg_attn_share', 'residual_window_attn', 'full_attn+cfg_attn_share']
                 method_candidates=block.method_candidates
             else:
-                method_candidates=["full_attn+cfg_attn_share","output_share"]
+                method_candidates=["output_share","full_attn+cfg_attn_share"]
             selected_method="full_attn"
             for method in method_candidates:
                 attn.processor.steps_method[now_stepi]=method
@@ -62,38 +69,16 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
                 for _block in m.transformer_blocks:
                     for layer in _block.children():
                         layer.stepi=now_stepi
-                outs=m.forward(*args, **kwargs)[0]#.cpu().numpy()
+                outs=m.forward(*args, **kwargs)#.cpu().numpy()
                 
-                ssim=mse_similarity(raw_outs,outs)
-                target=m.ssim_thresholds[now_stepi][blocki]
+                sim=mse_similarity(raw_outs,outs)
+                target=m.sim_thresholds[now_stepi][blocki]
                 
-                if ssim>target:
+                if sim>target:
                     selected_method=method
+                # print(f"{method}: sim={sim}" )
             attn.processor.steps_method[now_stepi]=selected_method
             print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
-        
-        # calibrate ff
-        # if isinstance(block.ff, FastFeedForward):
-        #     selected_method="full_attn"
-        #     for method in ["cfg_attn_share","output_share"]:
-        #         block.ff.steps_method[now_stepi]=method
-        #         # compute output
-        #         for _block in m.transformer_blocks:
-        #             for layer in _block.children():
-        #                 layer.stepi=now_stepi
-        #         outs=m.forward(*args, **kwargs)[0]#.cpu().numpy()
-        #         ssim=mse_similarity(raw_outs,outs)
-        #         # ssim=0
-        #         # for i in range(raw_outs.shape[0]):
-        #         #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=0, data_range=raw_outs.max() - raw_outs.min())
-        #         # ssim/=raw_outs.shape[0]
-        #         target=m.ssim_thresholds[now_stepi][blocki]
-        #         # print(f"Block {blocki} step {now_stepi} method={method} SSIM {ssim} target {target}" )
-                
-        #         if ssim>target:
-        #             selected_method=method
-        #     block.ff.steps_method[now_stepi]=selected_method
-        #     print(f"Block {blocki} ff stepi{now_stepi} {selected_method}")
 
 
     for _block in m.transformer_blocks:
@@ -135,7 +120,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
             if ablation!="":
-                block.method_candidates=ablation.split(',')
+                block.method_candidates=ablation.split(',') if isinstance(ablation,str) else ablation
             else:
                 block.method_candidates=["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]
             print(f"method_candidates of {blocki} {block.method_candidates}")
@@ -148,7 +133,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                 block.ff=FastFeedForward(block.ff.net,["full_attn" for _ in range(n_steps)])
 
         # ssim_theshold for each calibration
-        ssim_thresholds=[]
+        sim_thresholds=[]
         # all_steps=blocki*len(blocks)
         interval=(1-threshold)/len(blocks)
         for step_i in range(n_steps):
@@ -161,11 +146,11 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
                 #     sub_list.append(1-interval*(blocki*n_steps+step_i))
                 # else:
                 #     sub_list.append(threshold)
-            ssim_thresholds.append(sub_list)
+            sim_thresholds.append(sub_list)
 
         # calibration
         h=transformer.register_forward_pre_hook(transformer_forward_pre_hook,with_kwargs=True)
-        transformer.ssim_thresholds=ssim_thresholds
+        transformer.sim_thresholds=sim_thresholds
         transformer.pipe=pipe
 
         outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)

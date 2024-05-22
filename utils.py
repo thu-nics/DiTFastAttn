@@ -44,7 +44,7 @@ def count_flops_attn(m:Attention, i, kwargs, o):
         
         ws=processor.window_size[1]-processor.window_size[0]
         
-        if method=="full_attn":
+        if method=="full_attn" or method=="":
             if processor.need_compute_residual[m.stepi-1]:
                 ops_qk*=(1+ws/kv_seq_len)
                 ops_kv*=(1+ws/kv_seq_len)
@@ -263,3 +263,4 @@ def calculate_flops(pipe,x, n_steps):
                         custom_ops={Attention: count_flops_attn},verbose=0,ret_layer_info=True)
     print(f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G")
     return macs/1e9,attn_ops/1e9
+
