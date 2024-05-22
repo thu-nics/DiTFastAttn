@@ -103,7 +103,10 @@ class FastAttnProcessor:
                 #         query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
                 #     ).transpose(1, 2)
                 w_hidden_states=flash_attn.flash_attn_func(query, key, value,window_size=self.window_size)
-                hidden_states=w_hidden_states+m.cached_residual[:batch_size].view_as(w_hidden_states)
+                if "without_residual" in method:
+                    hidden_states=w_hidden_states
+                else:
+                    hidden_states=w_hidden_states+m.cached_residual[:batch_size].view_as(w_hidden_states)
             
 
             hidden_states = hidden_states.reshape(batch_size, -1, m.heads * head_dim)
@@ -131,66 +134,114 @@ class FastAttnProcessor:
         return hidden_states
     
     def run_opensora_forward_method(self,m,hidden_states,encoder_hidden_states,attention_mask,temb,method):
-        if method=="output_share":
-            x = m.cached_output
-        else:
-            if "cfg_attn_share" in method:
-                batch_size=hidden_states.shape[0]
-                hidden_states = hidden_states[:batch_size//2]
-                if encoder_hidden_states is not None:
-                    encoder_hidden_states = encoder_hidden_states[:batch_size//2]
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:batch_size//2]
-            x=hidden_states
-            B, N, C = x.shape
-            # flash attn is not memory efficient for small sequences, this is empirical
-            enable_flash_attn = m.enable_flash_attn and (N > B)
-            qkv = m.qkv(x)
-            qkv_shape = (B, N, 3, m.num_heads, m.head_dim)
+        x=hidden_states
+        B, N, C = x.shape
+        # flash attn is not memory efficient for small sequences, this is empirical
+        enable_flash_attn = m.enable_flash_attn and (N > B)
+        qkv = m.qkv(x)
+        qkv_shape = (B, N, 3, m.num_heads, m.head_dim)
 
-            qkv = qkv.view(qkv_shape).permute(2, 0, 3, 1, 4)
-            q, k, v = qkv.unbind(0)
-            # WARNING: this may be a bug
-            if m.rope:
-                q = m.rotary_emb(q)
-                k = m.rotary_emb(k)
-            q, k = m.q_norm(q), m.k_norm(k)
+        qkv = qkv.view(qkv_shape).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+        # WARNING: this may be a bug
+        if m.rope:
+            q = m.rotary_emb(q)
+            k = m.rotary_emb(k)
+        q, k = m.q_norm(q), m.k_norm(k)
 
+        if enable_flash_attn:
+        # if 1:
+            from flash_attn import flash_attn_func
 
+            # (B, #heads, N, #dim) -> (B, N, #heads, #dim)
             q = q.permute(0, 2, 1, 3)
             k = k.permute(0, 2, 1, 3)
             v = v.permute(0, 2, 1, 3)
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=m.attn_drop.p if m.training else 0.0,
+                softmax_scale=m.scale,
+            )
+        else:
+            dtype = q.dtype
+            q = q * m.scale
+            attn = q @ k.transpose(-2, -1)  # translate attn to float32
+            attn = attn.to(torch.float32)
+            attn = attn.softmax(dim=-1)
+            attn = attn.to(dtype)  # cast back attn to original dtype
+            attn = m.attn_drop(attn)
+            x = attn @ v
+        x_output_shape = (B, N, C)
+        if not enable_flash_attn:
+            x = x.transpose(1, 2)
+        x = x.reshape(x_output_shape)
+        x = m.proj(x)
+        x = m.proj_drop(x)
+        return x
+        
+        
+        # if method=="output_share":
+        #     x = m.cached_output
+        # else:
+        #     if "cfg_attn_share" in method:
+        #         batch_size=hidden_states.shape[0]
+        #         hidden_states = hidden_states[:batch_size//2]
+        #         if encoder_hidden_states is not None:
+        #             encoder_hidden_states = encoder_hidden_states[:batch_size//2]
+        #         if attention_mask is not None:
+        #             attention_mask = attention_mask[:batch_size//2]
+        #     x=hidden_states
+        #     B, N, C = x.shape
+        #     # flash attn is not memory efficient for small sequences, this is empirical
+        #     enable_flash_attn = m.enable_flash_attn and (N > B)
+        #     qkv = m.qkv(x)
+        #     qkv_shape = (B, N, 3, m.num_heads, m.head_dim)
 
-            if "full_attn" in method:
-                x = flash_attn.flash_attn_func(
-                    q,
-                    k,
-                    v,
-                    dropout_p=m.attn_drop.p if m.training else 0.0,
-                    softmax_scale=m.scale,
-                )
-                if self.need_compute_residual[m.stepi]:
-                    w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
-                    residual=x-w_x
-                    if "cfg_attn_share" in method:
-                        residual=torch.cat([residual, residual], dim=0)
-                    m.cached_residual=residual
-            elif "residual_window_attn" in method:
-                w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
-                x=w_x+m.cached_residual[:B].view_as(w_x)
+        #     qkv = qkv.view(qkv_shape).permute(2, 0, 3, 1, 4)
+        #     q, k, v = qkv.unbind(0)
+        #     # WARNING: this may be a bug
+        #     if m.rope:
+        #         q = m.rotary_emb(q)
+        #         k = m.rotary_emb(k)
+        #     q, k = m.q_norm(q), m.k_norm(k)
 
-            x_output_shape = (B, N, C)
-            if not enable_flash_attn:
-                x = x.transpose(1, 2)
-            x = x.reshape(x_output_shape)
-            x = m.proj(x)
-            x = m.proj_drop(x)
+
+        #     q = q.permute(0, 2, 1, 3)
+        #     k = k.permute(0, 2, 1, 3)
+        #     v = v.permute(0, 2, 1, 3)
+
+        #     if "full_attn" in method:
+        #         x = flash_attn.flash_attn_func(
+        #             q,
+        #             k,
+        #             v,
+        #             dropout_p=m.attn_drop.p if m.training else 0.0,
+        #             softmax_scale=m.scale,
+        #         )
+        #         if self.need_compute_residual[m.stepi]:
+        #             w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
+        #             residual=x-w_x
+        #             if "cfg_attn_share" in method:
+        #                 residual=torch.cat([residual, residual], dim=0)
+        #             m.cached_residual=residual
+        #     elif "residual_window_attn" in method:
+        #         w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
+        #         x=w_x+m.cached_residual[:B].view_as(w_x)
+
+        #     x_output_shape = (B, N, C)
+        #     if not enable_flash_attn:
+        #         x = x.transpose(1, 2)
+        #     x = x.reshape(x_output_shape)
+        #     x = m.proj(x)
+        #     x = m.proj_drop(x)
             
-            if "cfg_attn_share" in method:
-                x = torch.cat([x, x], dim=0)
+        #     if "cfg_attn_share" in method:
+        #         x = torch.cat([x, x], dim=0)
 
-            if self.need_cache_output:
-                m.cached_output = x
+        #     if self.need_cache_output:
+        #         m.cached_output = x
         return x
 
 
