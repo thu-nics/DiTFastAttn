@@ -238,6 +238,12 @@ class OpensoraPipe():
                         continue
 
                 # sampling
+
+                for blocki, block in enumerate(self.transformer.transformer_blocks):
+                    for layer in block.children():
+                        layer.stepi=0
+                        layer.cached_residual=None
+                        layer.cached_output=None
                 
                 z = torch.randn(len(batch_prompts), vae.out_channels, *latent_size, device=device, dtype=dtype)
                 samples = scheduler.sample(
@@ -262,7 +268,7 @@ class OpensoraPipe():
                         save_path = f"{save_path}-{k}"
                     save_sample(sample, fps=cfg.fps // cfg.frame_interval, save_path=save_path)
                     sample_idx += 1
-                    return sample.transpose(0,1).float().cpu().numpy() # C, T, H, W
+        return sample.transpose(0,1).float().cpu().numpy() # C, T, H, W
 
 def main():
     cfg = parse_configs(training=False)
@@ -340,7 +346,7 @@ def main():
 
     # macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
 
-    transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:1], 
+    pipe,ssim=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:1], 
                                    threshold=cfg.threshold, window_size=[-cfg.window_size,cfg.window_size],
                                    use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug)
 
