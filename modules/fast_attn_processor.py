@@ -20,7 +20,7 @@ class FastAttnProcessor:
             need=False
             if "full_attn" in method:
                 for j in range(i+1,len(steps_method)):
-                    if "residual_window_attn" in steps_method[j]:
+                    if "residual_window_attn" in steps_method[j] and "without_residual" not in steps_method[j]:
                         need=True
                     if "full_attn" in steps_method[j]:
                         break

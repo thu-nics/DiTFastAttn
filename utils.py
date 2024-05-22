@@ -63,6 +63,9 @@ def count_flops_attn(m:Attention, i, kwargs, o):
         elif method=="output_share":
             ops_qk=0
             ops_kv=0
+        elif method=="residual_window_attn+without_residual":
+            ops_qk*=(ws/kv_seq_len)
+            ops_kv*=(ws/kv_seq_len)
         else:
             raise NotImplementedError(f"method {method} not implemented")
 
