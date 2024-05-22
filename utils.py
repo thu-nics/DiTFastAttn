@@ -2,6 +2,7 @@ import torch
 from diffusers.models.attention_processor import Attention
 import numpy as np
 import thop
+import torch.nn as nn
 from thop.profile import *
 
 
@@ -33,6 +34,9 @@ def count_flops_attn(m:Attention, i, kwargs, o):
 
     ops_qk=q_seq_len*kv_seq_len*m.heads*batch_size*dim//m.heads
     ops_kv=q_seq_len*dim*batch_size*kv_seq_len
+    if not hasattr(m,"printed_shape"):
+        print(f"Attention input shape is {hidden_states.shape}, encoder_hidden_states shape is {encoder_hidden_states.shape}")
+        m.printed_shape=True        
 
     if m.processor.__class__.__name__=="FastAttnProcessor":
         processor=m.processor
@@ -60,7 +64,7 @@ def count_flops_attn(m:Attention, i, kwargs, o):
             ops_qk=0
             ops_kv=0
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"method {method} not implemented")
 
     
     matmul_ops=ops_qk+ops_kv
@@ -232,11 +236,11 @@ def profile_pipe_transformer(
     total_ops, total_params, ret_dict = dfs_count(model)
     
     for name,module in model.named_modules():
-        if isinstance(module,Attention) and "attn1" in name:
+        if module.__class__.__name__=="Attention" and ("attn1" in name or "attn" in name):
             attn_ops+=module.total_ops.item()
             # print(f"attn1 {name} ops is {module.total_ops.item()}")
             
-        if isinstance(module,Attention) and "attn2" in name:
+        if module.__class__.__name__=="Attention" and ("attn2" in name or "cross_attn" in name):
             attn2_ops+=module.total_ops.item()
             # print(f"attn2 {name} ops is {module.total_ops.item()}")
 

@@ -19,6 +19,7 @@ cache
 .env.sh
 repositories
 *.png
+DeepFloyd
 
 __pycache__/
 output/

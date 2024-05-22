@@ -35,27 +35,6 @@ def mse_similarity(a,b):
     diff=(a-b)/(torch.max(a,b)+1e-6)
     return 1-diff.abs().clip(0,10).mean()
 
-def sample_noise_output(noise_pred,pipe,latent_model_input,guidance_scale,t):
-    latent_channels=pipe.transformer.config.in_channels
-    # perform guidance
-    if guidance_scale > 1:
-        eps, rest = noise_pred[:, :latent_channels], noise_pred[:, latent_channels:]
-        cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
-
-        half_eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
-        eps = torch.cat([half_eps, half_eps], dim=0)
-
-        noise_pred = torch.cat([eps, rest], dim=1)
-
-    # learned sigma
-    if pipe.transformer.config.out_channels // 2 == latent_channels:
-        model_output, _ = torch.split(noise_pred, latent_channels, dim=1)
-    else:
-        model_output = noise_pred
-
-    # compute previous image: x_t -> x_t-1
-    latent_model_input = pipe.scheduler.step(model_output, t, latent_model_input).prev_sample
-    return latent_model_input
 
 from diffusers.models.transformers.transformer_2d import Transformer2DModel
 def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
@@ -69,7 +48,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
         if now_stepi==0:
             continue
         # calibrate attn1
-        for attni,attn in enumerate([block.attn1,block.attn2]):
+        for attni,attn in enumerate([block.attn1]):
             if attn is None or not isinstance(attn.processor, FastAttnProcessor):
                 continue
             if attni==0:
@@ -86,15 +65,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
                 outs=m.forward(*args, **kwargs)[0]#.cpu().numpy()
                 
                 ssim=mse_similarity(raw_outs,outs)
-                # outs_im=sample_noise_output(outs,m.pipe,args[0],4,kwargs["timestep"].flatten()[0])
-                # bs=outs_im.shape[0]
-                # ssim=mse_similarity(raw_outs_im[:bs//2],outs_im[:bs//2])
-                # ssim=0
-                # for i in range(raw_outs.shape[0]):
-                #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-                # ssim/=raw_outs.shape[0]
                 target=m.ssim_thresholds[now_stepi][blocki]
-                # print(f">== {method}: {ssim}" )
                 
                 if ssim>target:
                     selected_method=method
@@ -102,27 +73,27 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
             print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
         
         # calibrate ff
-        if isinstance(block.ff, FastFeedForward):
-            selected_method="full_attn"
-            for method in ["cfg_attn_share","output_share"]:
-                block.ff.steps_method[now_stepi]=method
-                # compute output
-                for _block in m.transformer_blocks:
-                    for layer in _block.children():
-                        layer.stepi=now_stepi
-                outs=m.forward(*args, **kwargs)[0]#.cpu().numpy()
-                ssim=mse_similarity(raw_outs,outs)
-                # ssim=0
-                # for i in range(raw_outs.shape[0]):
-                #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=0, data_range=raw_outs.max() - raw_outs.min())
-                # ssim/=raw_outs.shape[0]
-                target=m.ssim_thresholds[now_stepi][blocki]
-                # print(f"Block {blocki} step {now_stepi} method={method} SSIM {ssim} target {target}" )
+        # if isinstance(block.ff, FastFeedForward):
+        #     selected_method="full_attn"
+        #     for method in ["cfg_attn_share","output_share"]:
+        #         block.ff.steps_method[now_stepi]=method
+        #         # compute output
+        #         for _block in m.transformer_blocks:
+        #             for layer in _block.children():
+        #                 layer.stepi=now_stepi
+        #         outs=m.forward(*args, **kwargs)[0]#.cpu().numpy()
+        #         ssim=mse_similarity(raw_outs,outs)
+        #         # ssim=0
+        #         # for i in range(raw_outs.shape[0]):
+        #         #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=0, data_range=raw_outs.max() - raw_outs.min())
+        #         # ssim/=raw_outs.shape[0]
+        #         target=m.ssim_thresholds[now_stepi][blocki]
+        #         # print(f"Block {blocki} step {now_stepi} method={method} SSIM {ssim} target {target}" )
                 
-                if ssim>target:
-                    selected_method=method
-            block.ff.steps_method[now_stepi]=selected_method
-            print(f"Block {blocki} ff stepi{now_stepi} {selected_method}")
+        #         if ssim>target:
+        #             selected_method=method
+        #     block.ff.steps_method[now_stepi]=selected_method
+        #     print(f"Block {blocki} ff stepi{now_stepi} {selected_method}")
 
 
     for _block in m.transformer_blocks:
@@ -138,7 +109,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     pipe = set_stepi_warp(raw_pipe)
     blocks=pipe.transformer.transformer_blocks
     transformer:Transformer2DModel=pipe.transformer
-    is_transform_attn2=blocks[0].attn2 is not None
+    # is_transform_attn2=blocks[0].attn2 is not None
     is_transform_attn2=False
     print(f"Transform attn2 {is_transform_attn2}")
     # is_transform_ff=hasattr(blocks[0],"ff")
@@ -156,21 +127,22 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         ssim=None
     else:
         # calibration raw
-        generator=torch.manual_seed(seed)
-        raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
-        raw_outs=np.concatenate(raw_outs,axis=0)
+        # generator=torch.manual_seed(seed)
+        # raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
+        # raw_outs=np.concatenate(raw_outs,axis=0)
         
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
-            if ablation=="":
+            if ablation!="":
                 block.method_candidates=ablation.split(',')
             else:
                 block.method_candidates=["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]
-            block.attn1.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
+            print(f"method_candidates of {blocki} {block.method_candidates}")
+            block.attn1.processor=(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
             block.attn1.processor.need_compute_residual=[True for _ in range(n_steps)]
             if is_transform_attn2:
-                block.attn2.set_processor(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
+                block.attn2.processor=(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
                 block.attn2.processor.need_compute_residual=[True for _ in range(n_steps)]
             if is_transform_ff:
                 block.ff=FastFeedForward(block.ff.net,["full_attn" for _ in range(n_steps)])
@@ -197,12 +169,13 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         transformer.pipe=pipe
 
         outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        outs=np.concatenate(outs,axis=0)
-        ssim=0
-        for i in range(raw_outs.shape[0]):
-            ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-        ssim/=raw_outs.shape[0]
-        print(f"Final SSIM {ssim}")
+        # outs=np.concatenate(outs,axis=0)
+        # ssim=0
+        # for i in range(raw_outs.shape[0]):
+        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
+        # ssim/=raw_outs.shape[0]
+        # print(f"Final SSIM {ssim}")
+        ssim=None
 
         h.remove()
 
@@ -233,9 +206,9 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     
     # set processor
     for blocki, block in enumerate(blocks):
-        block.attn1.set_processor(FastAttnProcessor(window_size,blocks_methods[blocki]["attn1"]))
+        block.attn1.processor=(FastAttnProcessor(window_size,blocks_methods[blocki]["attn1"]))
         if blocks_methods[blocki]["attn2"] is not None:
-            block.attn2.set_processor(FastAttnProcessor(window_size,blocks_methods[blocki]["attn2"]))
+            block.attn2.processor=(FastAttnProcessor(window_size,blocks_methods[blocki]["attn2"]))
         if blocks_methods[blocki]["ff"] is not None:
             block.ff=FastFeedForward(block.ff.net,blocks_methods[blocki]["ff"])
     

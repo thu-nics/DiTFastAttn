@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--sequential_calib", action="store_true")
     parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
     parser.add_argument("--eval_n_images", type=int, default=5000)
-    parser.add_argument("--eval_batchsize", type=int, default=8)
+    parser.add_argument("--eval_batchsize", type=int, default=12)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--raw_eval", action="store_true")
@@ -30,9 +30,9 @@ def main():
         fake_image_path = f"output/{args.model.replace('/','_')}_steps{args.n_steps}"
         calib_ssim=1
     else:
-        pipe,calib_ssim=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
+        pipe,calib_ssim=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug,ablation=args.ablation)
         # evaluate the results
-        if args.ablation:
+        if args.ablation!="":
             fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}_ablation{args.ablation}"
         else:
             fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}"
