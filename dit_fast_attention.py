@@ -1,6 +1,8 @@
 import torch
 from diffusers.models.attention_processor import Attention, AttnProcessor2_0
+from diffusers.models.transformers.transformer_2d import Transformer2DModel
 import functools
+import torch.nn.functional as F
 from skimage.metrics import structural_similarity
 import matplotlib.pyplot as plt
 import collections
@@ -31,7 +33,7 @@ def set_stepi_warp(pipe):
 
     return wrapper
 
-def mse_similarity(a,b):
+def similarity(a,b):
     sims=[]
     for ai,bi in zip(a,b):
         if isinstance(ai,torch.Tensor):
@@ -41,15 +43,36 @@ def mse_similarity(a,b):
     sim=sum(sims)/len(sims)
     return sim
 
+# def similarity(a,b):
+#     if not isinstance(a,torch.Tensor):
+#         a=a[0]
+#         b=b[0]
+#     c=a.shape[-3]
+#     h=a.shape[-2]
+#     w=a.shape[-1]
+#     a=a.view(-1,c*h*w)
+#     b=b.view(-1,c*h*w)
+#     # cos sim
+#     sim=F.cosine_similarity(a,b,dim=-1)
+#     sim=sim.mean()
+#     # sim=(a*b).sum(dim=-1)/(torch.norm(a,dim=-1)*torch.norm(b,dim=-1))
+#     return sim
 
-from diffusers.models.transformers.transformer_2d import Transformer2DModel
+# def similarity(a,b):
+#     # PSNR
+#     if not isinstance(a,torch.Tensor):
+#         a=a[0]
+#         b=b[0]
+#     mse=F.mse_loss(a,b)+1e-9
+#     sim=-10*torch.log10(mse/a.max())
+#     return sim/60
+
 def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
     now_stepi=m.transformer_blocks[0].attn1.stepi
     for blocki,block in enumerate(m.transformer_blocks):
         block.attn1.processor.need_compute_residual[now_stepi]=False
         block.attn1.processor.need_cache_output=False
     raw_outs=m.forward(*args, **kwargs)
-    # raw_outs_im=sample_noise_output(raw_outs,m.pipe,args[0],4,kwargs["timestep"].flatten()[0])
     for blocki,block in enumerate(m.transformer_blocks):
         if now_stepi==0:
             continue
@@ -71,14 +94,14 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
                         layer.stepi=now_stepi
                 outs=m.forward(*args, **kwargs)#.cpu().numpy()
                 
-                sim=mse_similarity(raw_outs,outs)
+                sim=similarity(raw_outs,outs)
                 target=m.sim_thresholds[now_stepi][blocki]
                 
                 if sim>target:
                     selected_method=method
                 # print(f"{method}: sim={sim}" )
             attn.processor.steps_method[now_stepi]=selected_method
-            print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
+            # print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
 
 
     for _block in m.transformer_blocks:
@@ -103,19 +126,14 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     
     
     if ablation=="":
-        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}.json"
+        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}.json"
     else:
-        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{ablation}.json"
+        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}_{ablation}.json"
     print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
         blocks_methods=torch.load(cache_file)
         ssim=None
     else:
-        # calibration raw
-        # generator=torch.manual_seed(seed)
-        # raw_outs=pipe(calib_x,num_inference_steps=n_steps,generator=generator,output_type='np',return_dict=False)
-        # raw_outs=np.concatenate(raw_outs,axis=0)
-        
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
@@ -134,7 +152,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
 
         # ssim_theshold for each calibration
         sim_thresholds=[]
-        # all_steps=blocki*len(blocks)
         interval=(1-threshold)/len(blocks)
         for step_i in range(n_steps):
             sub_list=[]
@@ -142,10 +159,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             for blocki in range(len(blocks)):
                 now_threshold-=interval
                 sub_list.append(now_threshold)
-                # if sequential_calib:
-                #     sub_list.append(1-interval*(blocki*n_steps+step_i))
-                # else:
-                #     sub_list.append(threshold)
             sim_thresholds.append(sub_list)
 
         # calibration
@@ -153,13 +166,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         transformer.sim_thresholds=sim_thresholds
         transformer.pipe=pipe
 
-        outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        # outs=np.concatenate(outs,axis=0)
-        # ssim=0
-        # for i in range(raw_outs.shape[0]):
-        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-        # ssim/=raw_outs.shape[0]
-        # print(f"Final SSIM {ssim}")
+        pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
         ssim=None
 
         h.remove()
@@ -179,15 +186,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
         if not os.path.exists("cache"):
             os.makedirs("cache")
         torch.save(blocks_methods,cache_file)
-        
-        # test final ssim
-        # outs=pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        # outs=np.concatenate(outs,axis=0)
-        # ssim=0
-        # for i in range(raw_outs.shape[0]):
-        #     ssim+=structural_similarity(raw_outs[i],outs[i], channel_axis=2, data_range=raw_outs.max() - raw_outs.min())
-        # ssim/=raw_outs.shape[0]
-        # print(f"Final SSIM {ssim}")
     
     # set processor
     for blocki, block in enumerate(blocks):

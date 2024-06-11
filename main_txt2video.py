@@ -80,18 +80,14 @@ def main():
     model = model.to(device, dtype).eval()
 
     # 3.3. build scheduler
-    from opensora.schedulers.iddpm import IDDPM
     scheduler = build_module(cfg.scheduler, SCHEDULERS)
 
-    # ======================================================
-    # 4. inference
-    # ======================================================
     save_dir = cfg.save_dir
-    cfg.n_calib=cfg.scheduler.num_sampling_steps
+    
+    cfg.n_steps=cfg.scheduler.num_sampling_steps
     save_dir+=f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}"
     os.makedirs(save_dir, exist_ok=True)
     pipe=OpensoraPipe(cfg,text_encoder,model,vae,scheduler,save_dir)
-    # pipe(prompts)
     for blocki,block in enumerate(pipe.transformer.blocks):
         block.attn1=block.attn
     
@@ -102,7 +98,7 @@ def main():
     # macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
 
     if cfg.threshold<1:
-        pipe,ssim=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:1], 
+        pipe,ssim=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:cfg.n_calib], 
                                     threshold=cfg.threshold, window_size=[-cfg.window_size,cfg.window_size],
                                     use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug,ablation=["residual_window_attn","output_share"])
 
@@ -115,18 +111,6 @@ def main():
     set_random_seed(seed=cfg.seed)
     pipe(prompts)
 
-    # pipe,calib_ssim=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
-
-    # macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
-    # latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[1,])
-    # if args.debug:
-    #     result={}
-    # else:
-    #     result = evaluate_quantitative_scores_text2img(
-    #         pipe, args.eval_real_image_path, mscoco_anno, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
-    #     )
-    # # save the result
-    # print(result)
     
 
 
