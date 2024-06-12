@@ -85,6 +85,7 @@ def main():
     save_dir = cfg.save_dir
     
     cfg.n_steps=cfg.scheduler.num_sampling_steps
+    cfg.batch_size=cfg.n_calib
     save_dir+=f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}"
     os.makedirs(save_dir, exist_ok=True)
     pipe=OpensoraPipe(cfg,text_encoder,model,vae,scheduler,save_dir)
@@ -97,10 +98,10 @@ def main():
 
     # macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
 
-    if cfg.threshold<1:
-        pipe,ssim=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:cfg.n_calib], 
+    if cfg.threshold>0:
+        pipe=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:cfg.n_calib], 
                                     threshold=cfg.threshold, window_size=[-cfg.window_size,cfg.window_size],
-                                    use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug,ablation=["residual_window_attn","output_share"])
+                                    use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug)
 
     
     macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])

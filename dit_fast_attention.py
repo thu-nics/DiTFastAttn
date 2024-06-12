@@ -13,6 +13,7 @@ import os
 import time
 from utils import set_profile_transformer_block_hook,process_profile_transformer_block
 import json
+from diffusers.models.transformers.transformer_2d import Transformer2DModelOutput
 
 def set_stepi_warp(pipe):
     @functools.wraps(pipe)
@@ -33,39 +34,18 @@ def set_stepi_warp(pipe):
 
     return wrapper
 
-def similarity(a,b):
-    sims=[]
+def compression_loss(a,b):
+    ls=[]
+    if isinstance(a,Transformer2DModelOutput):
+        a=[a.sample]
+        b=[b.sample]
     for ai,bi in zip(a,b):
         if isinstance(ai,torch.Tensor):
             diff=(ai-bi)/(torch.max(ai,bi)+1e-6)
-            sim=1-diff.abs().clip(0,10).mean()
-            sims.append(sim)
-    sim=sum(sims)/len(sims)
-    return sim
-
-# def similarity(a,b):
-#     if not isinstance(a,torch.Tensor):
-#         a=a[0]
-#         b=b[0]
-#     c=a.shape[-3]
-#     h=a.shape[-2]
-#     w=a.shape[-1]
-#     a=a.view(-1,c*h*w)
-#     b=b.view(-1,c*h*w)
-#     # cos sim
-#     sim=F.cosine_similarity(a,b,dim=-1)
-#     sim=sim.mean()
-#     # sim=(a*b).sum(dim=-1)/(torch.norm(a,dim=-1)*torch.norm(b,dim=-1))
-#     return sim
-
-# def similarity(a,b):
-#     # PSNR
-#     if not isinstance(a,torch.Tensor):
-#         a=a[0]
-#         b=b[0]
-#     mse=F.mse_loss(a,b)+1e-9
-#     sim=-10*torch.log10(mse/a.max())
-#     return sim/60
+            l=diff.abs().clip(0,10).mean()
+            ls.append(l)
+    l=sum(ls)/len(ls)
+    return l
 
 def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
     now_stepi=m.transformer_blocks[0].attn1.stepi
@@ -84,7 +64,7 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
                 # default methods are ['output_share', 'residual_window_attn+cfg_attn_share', 'residual_window_attn', 'full_attn+cfg_attn_share']
                 method_candidates=block.method_candidates
             else:
-                method_candidates=["output_share","full_attn+cfg_attn_share"]
+                method_candidates=["full_attn+cfg_attn_share","output_share"]
             selected_method="full_attn"
             for method in method_candidates:
                 attn.processor.steps_method[now_stepi]=method
@@ -94,14 +74,17 @@ def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
                         layer.stepi=now_stepi
                 outs=m.forward(*args, **kwargs)#.cpu().numpy()
                 
-                sim=similarity(raw_outs,outs)
-                target=m.sim_thresholds[now_stepi][blocki]
+                l=compression_loss(raw_outs,outs)
+                threshold=m.loss_thresholds[now_stepi][blocki]
                 
-                if sim>target:
+                if m.debug:
+                    print(f"{method}: L(O,O')={l} threshold={threshold}" )
+                if l<threshold:
                     selected_method=method
-                # print(f"{method}: sim={sim}" )
+                    break
+                
             attn.processor.steps_method[now_stepi]=selected_method
-            # print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
+            print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
 
 
     for _block in m.transformer_blocks:
@@ -132,7 +115,6 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
     print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
         blocks_methods=torch.load(cache_file)
-        ssim=None
     else:
         # reset all processors
         for blocki, block in enumerate(blocks):
@@ -140,7 +122,7 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             if ablation!="":
                 block.method_candidates=ablation.split(',') if isinstance(ablation,str) else ablation
             else:
-                block.method_candidates=["full_attn+cfg_attn_share","residual_window_attn","residual_window_attn+cfg_attn_share","output_share"]
+                block.method_candidates=["output_share","residual_window_attn+cfg_attn_share","residual_window_attn","full_attn+cfg_attn_share"]
             print(f"method_candidates of {blocki} {block.method_candidates}")
             block.attn1.processor=(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
             block.attn1.processor.need_compute_residual=[True for _ in range(n_steps)]
@@ -150,24 +132,22 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
             if is_transform_ff:
                 block.ff=FastFeedForward(block.ff.net,["full_attn" for _ in range(n_steps)])
 
-        # ssim_theshold for each calibration
-        sim_thresholds=[]
-        interval=(1-threshold)/len(blocks)
+        # threshold for each layer
+        loss_thresholds=[]
         for step_i in range(n_steps):
             sub_list=[]
-            now_threshold=1
             for blocki in range(len(blocks)):
-                now_threshold-=interval
-                sub_list.append(now_threshold)
-            sim_thresholds.append(sub_list)
+                threshold_i=(blocki+1)/n_steps*threshold
+                sub_list.append(threshold_i)
+            loss_thresholds.append(sub_list)
 
         # calibration
         h=transformer.register_forward_pre_hook(transformer_forward_pre_hook,with_kwargs=True)
-        transformer.sim_thresholds=sim_thresholds
+        transformer.loss_thresholds=loss_thresholds
         transformer.pipe=pipe
+        transformer.debug=debug
 
         pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
-        ssim=None
 
         h.remove()
 
@@ -214,5 +194,5 @@ def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshol
 
     
 
-    return pipe,ssim
+    return pipe
     

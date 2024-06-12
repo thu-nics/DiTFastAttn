@@ -41,7 +41,6 @@ def main():
             use_safetensors=True,
         )
         pipe.config._name_or_path=args.model
-
         
         pipe.to("cuda")
     else:
@@ -57,10 +56,9 @@ def main():
     
     if args.raw_eval:
         fake_image_path = f"output/{args.model.replace('/','_')}_steps{args.n_steps}"
-        calib_ssim=1
     else:
         
-        pipe,calib_ssim=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
+        pipe=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug)
 
         fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_seq{args.sequential_calib}"
         
@@ -76,7 +74,7 @@ def main():
     # save the result
     print(result)
     with open("output/results.txt", "a+") as f:
-        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n")
+        f.write(f"{args}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n")
 
 
 if __name__ == "__main__":

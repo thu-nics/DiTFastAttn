@@ -28,9 +28,8 @@ def main():
     calib_x=torch.randint(0, 1000, (args.n_calib,),generator=torch.Generator().manual_seed(3)).to("cuda")
     if args.raw_eval:
         fake_image_path = f"output/{args.model.replace('/','_')}_steps{args.n_steps}"
-        calib_ssim=1
     else:
-        pipe,calib_ssim=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug,ablation=args.ablation)
+        pipe=transform_model_fast_attention(pipe, n_steps=args.n_steps, n_calib=args.n_calib, calib_x=calib_x, threshold=args.threshold, window_size=[-args.window_size,args.window_size],use_cache=args.use_cache,seed=3, sequential_calib=args.sequential_calib,debug=args.debug,ablation=args.ablation)
         # evaluate the results
         if args.ablation!="":
             fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_sequential{args.sequential_calib}_ablation{args.ablation}"
@@ -39,16 +38,16 @@ def main():
         
     macs, attn_mac=calculate_flops(pipe, calib_x[0:1],n_steps=args.n_steps)
     latencies=test_latencies(pipe, args.n_steps,calib_x,bs=[8])
-    if not args.debug:
+    if args.debug:
+        result={}
+    else:
         result = evaluate_quantitative_scores(
             pipe, args.eval_real_image_path, args.eval_n_images, args.eval_batchsize,num_inference_steps=args.n_steps, fake_image_path=fake_image_path
         )
-    else:
-        result={}
 
     # save the result
     with open("output/results.txt", "a+") as f:
-        f.write(f"{args}\ncalib_ssim={calib_ssim}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n")
+        f.write(f"{args}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n")
 
 
 if __name__ == "__main__":
