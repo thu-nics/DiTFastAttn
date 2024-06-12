@@ -104,6 +104,7 @@ def main():
                                     use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug)
 
     
+    cfg.batch_size=1
     macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
     
     with open("output/opensora_results.txt", "a+") as f:

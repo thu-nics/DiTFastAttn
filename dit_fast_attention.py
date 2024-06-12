@@ -13,7 +13,6 @@ import os
 import time
 from utils import set_profile_transformer_block_hook,process_profile_transformer_block
 import json
-from diffusers.models.transformers.transformer_2d import Transformer2DModelOutput
 
 def set_stepi_warp(pipe):
     @functools.wraps(pipe)
@@ -36,7 +35,7 @@ def set_stepi_warp(pipe):
 
 def compression_loss(a,b):
     ls=[]
-    if isinstance(a,Transformer2DModelOutput):
+    if a.__class__.__name__=="Transformer2DModelOutput":
         a=[a.sample]
         b=[b.sample]
     for ai,bi in zip(a,b):
