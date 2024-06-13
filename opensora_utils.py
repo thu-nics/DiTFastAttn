@@ -41,7 +41,7 @@ def parse_args(training=False):
     parser.add_argument("--config",default="data/sample.py", help="model config file path")
 
     # DiTFastAttn
-    parser.add_argument("--n_calib", type=int, default=2)
+    parser.add_argument("--n_calib", type=int, default=4)
     parser.add_argument("--n_steps", type=int, default=100)
     parser.add_argument("--threshold", type=float, default=0.95)
     parser.add_argument("--window_size", type=int, default=128)
