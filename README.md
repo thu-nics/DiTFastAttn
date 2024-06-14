@@ -10,7 +10,7 @@ To tackle these redundancies, we propose three techniques:
 2. Temporal Similarity Reduction to exploit the similarity between steps.
 3. Conditional Redundancy Elimination to skip redundant computations during conditional generation.
 
-Please read our paper for more detailed information.
+Please read our [paper](https://arxiv.org/pdf/2406.08552) for more detailed information.
 
 # Install
 
@@ -52,4 +52,16 @@ Opensora compression:
 ```
 python run_opensora.py --threshold 0.05 --window_size 50 --n_calib 4 --use_cache
 ```
-Note that before using opensora, you should install the opensora according to the readme from `https://github.com/hpcaitech/Open-Sora`. Because the opensora is under development. You should switch to v1.1 version of opensora if you meet some problem.
+Note that before using opensora, you should install the opensora according to the readme from `https://github.com/hpcaitech/Open-Sora`. Because the opensora is under development. You should switch to commit id `ea41df3d6cc5f38` of opensora if you meet some problem.
+
+# Citation
+
+```
+@misc{yuan2024ditfastattn,
+      title={DiTFastAttn: Attention Compression for Diffusion Transformer Models}, 
+      author={Zhihang Yuan and Pu Lu and Hanling Zhang and Xuefei Ning and Linfeng Zhang and Tianchen Zhao and Shengen Yan and Guohao Dai and Yu Wang},
+      year={2024},
+      eprint={2406.08552},
+      archivePrefix={arXiv},
+}
+```
