@@ -1,7 +1,11 @@
 from diffusers import DiTPipeline, DPMSolverMultistepScheduler
 import torch
 import argparse
-from evaluation import evaluate_quantitative_scores,evaluate_quantitative_scores_text2img,test_latencies
+from evaluation import (
+    evaluate_quantitative_scores,
+    evaluate_quantitative_scores_text2img,
+    test_latencies,
+)
 from dit_fast_attention import transform_model_fast_attention
 import os
 import json
@@ -22,8 +26,9 @@ from opensora.registry import MODELS, SCHEDULERS, build_module
 from opensora.utils.config_utils import parse_configs
 from opensora.utils.misc import to_torch_dtype
 from mmengine.config import Config
-from utils import profile_pipe_transformer,count_flops_attn
+from utils import profile_pipe_transformer, count_flops_attn
 from opensora_utils import *
+
 
 def main():
     cfg = parse_configs(training=False)
@@ -62,7 +67,9 @@ def main():
     input_size = (cfg.num_frames, *cfg.image_size)
     vae = build_module(cfg.vae, MODELS)
     latent_size = vae.get_latent_size(input_size)
-    text_encoder = build_module(cfg.text_encoder, MODELS, device="cpu")  # T5 must be fp32
+    text_encoder = build_module(
+        cfg.text_encoder, MODELS, device="cpu"
+    )  # T5 must be fp32
 
     model = build_module(
         cfg.model,
@@ -83,37 +90,44 @@ def main():
     scheduler = build_module(cfg.scheduler, SCHEDULERS)
 
     save_dir = cfg.save_dir
-    
-    cfg.n_steps=cfg.scheduler.num_sampling_steps
-    cfg.batch_size=cfg.n_calib
-    save_dir+=f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}"
+
+    cfg.n_steps = cfg.scheduler.num_sampling_steps
+    cfg.batch_size = cfg.n_calib
+    save_dir += f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}"
     os.makedirs(save_dir, exist_ok=True)
-    pipe=OpensoraPipe(cfg,text_encoder,model,vae,scheduler,save_dir)
-    for blocki,block in enumerate(pipe.transformer.blocks):
-        block.attn1=block.attn
-    
-    pipe.transformer.transformer_blocks=pipe.transformer.blocks
+    pipe = OpensoraPipe(cfg, text_encoder, model, vae, scheduler, save_dir)
+    for blocki, block in enumerate(pipe.transformer.blocks):
+        block.attn1 = block.attn
+
+    pipe.transformer.transformer_blocks = pipe.transformer.blocks
     from argparse import Namespace
-    pipe.config=Namespace(_name_or_path="opensorav1.1")
+
+    pipe.config = Namespace(_name_or_path="opensorav1.1")
 
     # macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
 
-    if cfg.threshold>0:
-        pipe=transform_model_fast_attention(pipe, n_steps=cfg.n_steps, n_calib=cfg.n_calib, calib_x=prompts[:cfg.n_calib], 
-                                    threshold=cfg.threshold, window_size=[-cfg.window_size,cfg.window_size],
-                                    use_cache=cfg.use_cache,seed=3, sequential_calib=cfg.sequential_calib,debug=cfg.debug)
+    if cfg.threshold > 0:
+        pipe = transform_model_fast_attention(
+            pipe,
+            n_steps=cfg.n_steps,
+            n_calib=cfg.n_calib,
+            calib_x=prompts[: cfg.n_calib],
+            threshold=cfg.threshold,
+            window_size=[-cfg.window_size, cfg.window_size],
+            use_cache=cfg.use_cache,
+            seed=3,
+            sequential_calib=cfg.sequential_calib,
+            debug=cfg.debug,
+        )
 
-    
-    cfg.batch_size=1
-    macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
-    
+    cfg.batch_size = 1
+    macs, attn_mac = opensora_calculate_flops(pipe, prompts[:1])
+
     with open("output/opensora_results.txt", "a+") as f:
         f.write(f"{cfg}\n{save_dir}\nmacs={macs}\nattn_mac={attn_mac}\n\n")
-    
+
     set_random_seed(seed=cfg.seed)
     pipe(prompts)
-
-    
 
 
 if __name__ == "__main__":

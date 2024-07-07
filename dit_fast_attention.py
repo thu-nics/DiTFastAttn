@@ -11,187 +11,239 @@ from modules.fast_feed_forward import FastFeedForward
 from modules.fast_attn_processor import FastAttnProcessor
 import os
 import time
-from utils import set_profile_transformer_block_hook,process_profile_transformer_block
+from utils import set_profile_transformer_block_hook, process_profile_transformer_block
 import json
+
 
 def set_stepi_warp(pipe):
     @functools.wraps(pipe)
     def wrapper(*args, **kwargs):
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             for layer in block.children():
-                layer.stepi=0
-                layer.cached_residual=None
-                layer.cached_output=None
+                layer.stepi = 0
+                layer.cached_residual = None
+                layer.cached_output = None
             # print(f"Reset stepi to 0 for block {blocki}")
-        out=pipe(*args, **kwargs)
+        out = pipe(*args, **kwargs)
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             for layer in block.children():
-                layer.stepi=0
-                layer.cached_residual=None
-                layer.cached_output=None
+                layer.stepi = 0
+                layer.cached_residual = None
+                layer.cached_output = None
         return out
 
     return wrapper
 
-def compression_loss(a,b):
-    ls=[]
-    if a.__class__.__name__=="Transformer2DModelOutput":
-        a=[a.sample]
-        b=[b.sample]
-    for ai,bi in zip(a,b):
-        if isinstance(ai,torch.Tensor):
-            diff=(ai-bi)/(torch.max(ai,bi)+1e-6)
-            l=diff.abs().clip(0,10).mean()
+
+def compression_loss(a, b):
+    ls = []
+    if a.__class__.__name__ == "Transformer2DModelOutput":
+        a = [a.sample]
+        b = [b.sample]
+    for ai, bi in zip(a, b):
+        if isinstance(ai, torch.Tensor):
+            diff = (ai - bi) / (torch.max(ai, bi) + 1e-6)
+            l = diff.abs().clip(0, 10).mean()
             ls.append(l)
-    l=sum(ls)/len(ls)
+    l = sum(ls) / len(ls)
     return l
 
-def transformer_forward_pre_hook(m:Transformer2DModel, args, kwargs):
-    now_stepi=m.transformer_blocks[0].attn1.stepi
-    for blocki,block in enumerate(m.transformer_blocks):
-        block.attn1.processor.need_compute_residual[now_stepi]=False
-        block.attn1.processor.need_cache_output=False
-    raw_outs=m.forward(*args, **kwargs)
-    for blocki,block in enumerate(m.transformer_blocks):
-        if now_stepi==0:
+
+def transformer_forward_pre_hook(m: Transformer2DModel, args, kwargs):
+    now_stepi = m.transformer_blocks[0].attn1.stepi
+    for blocki, block in enumerate(m.transformer_blocks):
+        block.attn1.processor.need_compute_residual[now_stepi] = False
+        block.attn1.processor.need_cache_output = False
+    raw_outs = m.forward(*args, **kwargs)
+    for blocki, block in enumerate(m.transformer_blocks):
+        if now_stepi == 0:
             continue
         # calibrate attn1
-        for attni,attn in enumerate([block.attn1]):
+        for attni, attn in enumerate([block.attn1]):
             if attn is None or not isinstance(attn.processor, FastAttnProcessor):
                 continue
-            if attni==0:
+            if attni == 0:
                 # default methods are ['output_share', 'residual_window_attn+cfg_attn_share', 'residual_window_attn', 'full_attn+cfg_attn_share']
-                method_candidates=block.method_candidates
+                method_candidates = block.method_candidates
             else:
-                method_candidates=["full_attn+cfg_attn_share","output_share"]
-            selected_method="full_attn"
+                method_candidates = ["full_attn+cfg_attn_share", "output_share"]
+            selected_method = "full_attn"
             for method in method_candidates:
-                attn.processor.steps_method[now_stepi]=method
+                attn.processor.steps_method[now_stepi] = method
                 # compute output
                 for _block in m.transformer_blocks:
                     for layer in _block.children():
-                        layer.stepi=now_stepi
-                outs=m.forward(*args, **kwargs)#.cpu().numpy()
-                
-                l=compression_loss(raw_outs,outs)
-                threshold=m.loss_thresholds[now_stepi][blocki]
-                
-                if m.debug:
-                    print(f"{method}: L(O,O')={l} threshold={threshold}" )
-                if l<threshold:
-                    selected_method=method
-                    break
-                
-            attn.processor.steps_method[now_stepi]=selected_method
-            print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
+                        layer.stepi = now_stepi
+                outs = m.forward(*args, **kwargs)  # .cpu().numpy()
 
+                l = compression_loss(raw_outs, outs)
+                threshold = m.loss_thresholds[now_stepi][blocki]
+
+                if m.debug:
+                    print(f"{method}: L(O,O')={l} threshold={threshold}")
+                if l < threshold:
+                    selected_method = method
+                    break
+
+            attn.processor.steps_method[now_stepi] = selected_method
+            print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
 
     for _block in m.transformer_blocks:
         for layer in _block.children():
-            layer.stepi=now_stepi
+            layer.stepi = now_stepi
 
-    for blocki,block in enumerate(m.transformer_blocks):
-        block.attn1.processor.need_compute_residual[now_stepi]=True
-        block.attn1.processor.need_cache_output=True
+    for blocki, block in enumerate(m.transformer_blocks):
+        block.attn1.processor.need_compute_residual[now_stepi] = True
+        block.attn1.processor.need_cache_output = True
+
 
 @torch.no_grad()
-def transform_model_fast_attention(raw_pipe, n_steps, n_calib, calib_x, threshold, window_size=[-64,64],use_cache=False,seed=3,sequential_calib=False,debug=False,ablation=""):
+def transform_model_fast_attention(
+    raw_pipe,
+    n_steps,
+    n_calib,
+    calib_x,
+    threshold,
+    window_size=[-64, 64],
+    use_cache=False,
+    seed=3,
+    sequential_calib=False,
+    debug=False,
+    ablation="",
+):
     pipe = set_stepi_warp(raw_pipe)
-    blocks=pipe.transformer.transformer_blocks
-    transformer:Transformer2DModel=pipe.transformer
+    blocks = pipe.transformer.transformer_blocks
+    transformer: Transformer2DModel = pipe.transformer
     # is_transform_attn2=blocks[0].attn2 is not None
-    is_transform_attn2=False
+    is_transform_attn2 = False
     print(f"Transform attn2 {is_transform_attn2}")
     # is_transform_ff=hasattr(blocks[0],"ff")
-    is_transform_ff=False
+    is_transform_ff = False
     print(f"Transform ff {is_transform_ff}")
-    
-    
-    if ablation=="":
-        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}.json"
+
+    if ablation == "":
+        cache_file = f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}.json"
     else:
-        cache_file=f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}_{ablation}.json"
+        cache_file = f"cache/{raw_pipe.config._name_or_path.replace('/','_')}_{n_steps}_{n_calib}_{threshold}_{sequential_calib}_{window_size}_{ablation}.json"
     print(f"cache file is {cache_file}")
     if use_cache and os.path.exists(cache_file):
-        blocks_methods=torch.load(cache_file)
+        blocks_methods = torch.load(cache_file)
     else:
         # reset all processors
         for blocki, block in enumerate(blocks):
             attn: Attention = block.attn1
-            if ablation!="":
-                block.method_candidates=ablation.split(',') if isinstance(ablation,str) else ablation
+            if ablation != "":
+                block.method_candidates = (
+                    ablation.split(",") if isinstance(ablation, str) else ablation
+                )
             else:
-                block.method_candidates=["output_share","residual_window_attn+cfg_attn_share","residual_window_attn","full_attn+cfg_attn_share"]
+                block.method_candidates = [
+                    "output_share",
+                    "residual_window_attn+cfg_attn_share",
+                    "residual_window_attn",
+                    "full_attn+cfg_attn_share",
+                ]
             print(f"method_candidates of {blocki} {block.method_candidates}")
-            block.attn1.processor=(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
-            block.attn1.processor.need_compute_residual=[True for _ in range(n_steps)]
+            block.attn1.processor = FastAttnProcessor(
+                window_size, ["full_attn" for _ in range(n_steps)]
+            )
+            block.attn1.processor.need_compute_residual = [True for _ in range(n_steps)]
             if is_transform_attn2:
-                block.attn2.processor=(FastAttnProcessor(window_size,["full_attn" for _ in range(n_steps)]))
-                block.attn2.processor.need_compute_residual=[True for _ in range(n_steps)]
+                block.attn2.processor = FastAttnProcessor(
+                    window_size, ["full_attn" for _ in range(n_steps)]
+                )
+                block.attn2.processor.need_compute_residual = [
+                    True for _ in range(n_steps)
+                ]
             if is_transform_ff:
-                block.ff=FastFeedForward(block.ff.net,["full_attn" for _ in range(n_steps)])
+                block.ff = FastFeedForward(
+                    block.ff.net, ["full_attn" for _ in range(n_steps)]
+                )
 
         # threshold for each layer
-        loss_thresholds=[]
+        loss_thresholds = []
         for step_i in range(n_steps):
-            sub_list=[]
+            sub_list = []
             for blocki in range(len(blocks)):
-                threshold_i=(blocki+1)/n_steps*threshold
+                threshold_i = (blocki + 1) / n_steps * threshold
                 sub_list.append(threshold_i)
             loss_thresholds.append(sub_list)
 
         # calibration
-        h=transformer.register_forward_pre_hook(transformer_forward_pre_hook,with_kwargs=True)
-        transformer.loss_thresholds=loss_thresholds
-        transformer.pipe=pipe
-        transformer.debug=debug
+        h = transformer.register_forward_pre_hook(
+            transformer_forward_pre_hook, with_kwargs=True
+        )
+        transformer.loss_thresholds = loss_thresholds
+        transformer.pipe = pipe
+        transformer.debug = debug
 
-        pipe(calib_x,num_inference_steps=n_steps,generator=torch.manual_seed(seed),output_type='np',return_dict=False)
+        pipe(
+            calib_x,
+            num_inference_steps=n_steps,
+            generator=torch.manual_seed(seed),
+            output_type="np",
+            return_dict=False,
+        )
 
         h.remove()
 
-        blocks_methods=[]
+        blocks_methods = []
         for blocki, block in enumerate(blocks):
-            attn_steps_method=block.attn1.processor.steps_method
-            attn2_steps_method=block.attn2.processor.steps_method if is_transform_attn2 else None
-            ff_steps_method=block.ff.steps_method if is_transform_ff else None
-            blocks_methods.append({
-                "attn1":attn_steps_method,
-                "attn2":attn2_steps_method,
-                "ff":ff_steps_method
-            })
+            attn_steps_method = block.attn1.processor.steps_method
+            attn2_steps_method = (
+                block.attn2.processor.steps_method if is_transform_attn2 else None
+            )
+            ff_steps_method = block.ff.steps_method if is_transform_ff else None
+            blocks_methods.append(
+                {
+                    "attn1": attn_steps_method,
+                    "attn2": attn2_steps_method,
+                    "ff": ff_steps_method,
+                }
+            )
 
         # save cache
         if not os.path.exists("cache"):
             os.makedirs("cache")
-        torch.save(blocks_methods,cache_file)
-    
+        torch.save(blocks_methods, cache_file)
+
     # set processor
     for blocki, block in enumerate(blocks):
-        block.attn1.processor=(FastAttnProcessor(window_size,blocks_methods[blocki]["attn1"]))
+        block.attn1.processor = FastAttnProcessor(
+            window_size, blocks_methods[blocki]["attn1"]
+        )
         if blocks_methods[blocki]["attn2"] is not None:
-            block.attn2.processor=(FastAttnProcessor(window_size,blocks_methods[blocki]["attn2"]))
+            block.attn2.processor = FastAttnProcessor(
+                window_size, blocks_methods[blocki]["attn2"]
+            )
         if blocks_methods[blocki]["ff"] is not None:
-            block.ff=FastFeedForward(block.ff.net,blocks_methods[blocki]["ff"])
-    
+            block.ff = FastFeedForward(block.ff.net, blocks_methods[blocki]["ff"])
+
     # statistics
-    counts=collections.Counter([method for block in blocks for method in block.attn1.processor.steps_method])
-    total=sum(counts.values())
-    for k,v in counts.items():
+    counts = collections.Counter(
+        [method for block in blocks for method in block.attn1.processor.steps_method]
+    )
+    total = sum(counts.values())
+    for k, v in counts.items():
         print(f"attn1 {k} {v/total}")
 
     if is_transform_attn2:
-        counts=collections.Counter([method for block in blocks for method in block.attn2.processor.steps_method])
-        total=sum(counts.values())
-        for k,v in counts.items():
+        counts = collections.Counter(
+            [
+                method
+                for block in blocks
+                for method in block.attn2.processor.steps_method
+            ]
+        )
+        total = sum(counts.values())
+        for k, v in counts.items():
             print(f"attn2 {k} {v/total}")
     if is_transform_ff:
-        counts=collections.Counter([method for block in blocks for method in block.ff.steps_method])
-        total=sum(counts.values())
-        for k,v in counts.items():
+        counts = collections.Counter(
+            [method for block in blocks for method in block.ff.steps_method]
+        )
+        total = sum(counts.values())
+        for k, v in counts.items():
             print(f"ff {k} {v/total}")
 
-    
-
     return pipe
-    
