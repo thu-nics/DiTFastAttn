@@ -84,7 +84,7 @@ def test_latencies(
         print(f"average time for bs={b} inference: {t}")
         latencies[f"{b}_all"] = t
 
-        if test_attention:
+        if test_attention:  # Test the latency of the attention modules
             for name, module in pipe.transformer.named_modules():
                 if isinstance(module, Attention) and "attn1" in name:
                     module.old_forward = module.forward
@@ -138,11 +138,7 @@ def evaluate_quantitative_scores(
             torch_images, size=(299, 299), mode="bilinear", align_corners=False
         )
         inception.update(torch_images)
-        # save torch_image
-        # for j, image in enumerate(torch_images):
-        #     image = F.to_pil_image(image)
-        #     image.save(f"{fake_image_path}/{i+j}_2.png")
-        # save
+
         for j, image in enumerate(fake_images):
             image = F.to_pil_image(image)
             image.save(f"{fake_image_path}/{i+j}.png")
@@ -185,8 +181,6 @@ def evaluate_quantitative_scores_text2img(
 
         slice = mscoco_anno["annotations"][index : index + batchsize]
         filename_list = [str(d["id"]).zfill(12) for d in slice]
-        # if f"{filename_list[0]}.jpg" in os.listdir(fake_image_path):
-        #     continue
         print(f"Processing {index}th image")
         caption_list = [d["caption"] for d in slice]
         torch_images = []
@@ -200,6 +194,7 @@ def evaluate_quantitative_scores_text2img(
         if len(torch_images) > 0:
             torch_images = torch.cat(torch_images, dim=0)
             print(torch_images.shape)
+            # TODO: make sure the interpolated size is 256 or 299?
             torch_images = torch.nn.functional.interpolate(
                 torch_images, size=(256, 256), mode="bilinear", align_corners=False
             )
@@ -212,7 +207,6 @@ def evaluate_quantitative_scores_text2img(
                 output_type="np",
                 num_inference_steps=num_inference_steps,
             )
-            # output = pipe(caption_list, generator = generator)
             fake_images = output.images
             # Inception Score
             count = 0
@@ -259,7 +253,6 @@ def method_speed_test(pipe):
             "residual_window_attn+cfg_attn_share",
             "output_share",
         ]:
-            # for method in ["ori","full_attn","residual_window_attn","output_share"]:
             if method == "ori":
                 attn.set_processor(AttnProcessor2_0())
                 attn.processor.need_compute_residual = [1]

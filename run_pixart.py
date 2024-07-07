@@ -62,8 +62,8 @@ def main():
 
     # set seed
     np.random.seed(3)
-    slice = np.random.choice(mscoco_anno["annotations"], args.n_calib)
-    calib_x = [d["caption"] for d in slice]
+    slice_ = np.random.choice(mscoco_anno["annotations"], args.n_calib)
+    calib_x = [d["caption"] for d in slice_]
 
     if args.raw_eval:
         fake_image_path = f"output/{args.model.replace('/','_')}_steps{args.n_steps}"

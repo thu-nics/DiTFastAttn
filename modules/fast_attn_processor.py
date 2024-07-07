@@ -10,10 +10,11 @@ class FastAttnProcessor:
     def __init__(self, window_size, steps_method):
         self.window_size = window_size
         self.steps_method = steps_method
+        # Check at which timesteps do we need to compute the full-window residual
+        # of this attention module
         self.need_compute_residual = self.compute_need_compute_residual(steps_method)
         self.need_cache_output = True
         self.mask_cache = {}
-        # print(f"need_compute_residual {[(_,__) for _,__ in zip(steps_method,self.need_compute_residual)]}")
 
     def compute_need_compute_residual(self, steps_method):
         need_compute_residual = []
@@ -25,8 +26,12 @@ class FastAttnProcessor:
                         "residual_window_attn" in steps_method[j]
                         and "without_residual" not in steps_method[j]
                     ):
+                        # If encountered a step that conduct WA-RS,
+                        # this step needs the residual computation
                         need = True
                     if "full_attn" in steps_method[j]:
+                        # If encountered another step using the `full-attn` strategy,
+                        # this step doesn't need the residual computation
                         break
             need_compute_residual.append(need)
         return need_compute_residual
@@ -39,6 +44,11 @@ class FastAttnProcessor:
             hidden_states = m.cached_output
         else:
             if "cfg_attn_share" in method:
+                # Directly use the unconditional branch's attention output
+                # as the conditional branch's attention output
+
+                # TODO: Maybe use the conditional branch's attention output
+                # as the unconditional's is better
                 batch_size = hidden_states.shape[0]
                 hidden_states = hidden_states[: batch_size // 2]
                 if encoder_hidden_states is not None:
@@ -111,25 +121,23 @@ class FastAttnProcessor:
             elif "full_attn" in method:
                 all_hidden_states = flash_attn.flash_attn_func(query, key, value)
                 if self.need_compute_residual[m.stepi]:
-                    # w_hidden_states = self.window_attn(
-                    #     query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
-                    # ).transpose(1, 2)
+                    # Compute the full-window attention residual
                     w_hidden_states = flash_attn.flash_attn_func(
                         query, key, value, window_size=self.window_size
                     )
                     residual = all_hidden_states - w_hidden_states
                     if "cfg_attn_share" in method:
                         residual = torch.cat([residual, residual], dim=0)
+                    # Save the residual for usage in follow-up steps
                     m.cached_residual = residual
                 hidden_states = all_hidden_states
             elif "residual_window_attn" in method:
-                # w_hidden_states = self.window_attn(
-                #         query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
-                #     ).transpose(1, 2)
                 w_hidden_states = flash_attn.flash_attn_func(
                     query, key, value, window_size=self.window_size
                 )
                 if "without_residual" in method:
+                    # For ablation study of `residual_window_attn+without_residual`
+                    # v.s. `residual_window_attn`
                     hidden_states = w_hidden_states
                 else:
                     hidden_states = w_hidden_states + m.cached_residual[
@@ -301,5 +309,6 @@ class FastAttnProcessor:
                 temb,
                 self.steps_method[attn.stepi],
             )
+        # After been call once, add the timestep index of this attention module by 1
         attn.stepi += 1
         return hidden_states

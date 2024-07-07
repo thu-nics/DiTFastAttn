@@ -23,8 +23,9 @@ def set_stepi_warp(pipe):
                 layer.stepi = 0
                 layer.cached_residual = None
                 layer.cached_output = None
-            # print(f"Reset stepi to 0 for block {blocki}")
+
         out = pipe(*args, **kwargs)
+
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
             for layer in block.children():
                 layer.stepi = 0
@@ -52,29 +53,32 @@ def compression_loss(a, b):
 def transformer_forward_pre_hook(m: Transformer2DModel, args, kwargs):
     now_stepi = m.transformer_blocks[0].attn1.stepi
     for blocki, block in enumerate(m.transformer_blocks):
+        # Set `need_compute_residual` to False to avoid the process of trying different
+        # compression strategies to override the saved residual.
         block.attn1.processor.need_compute_residual[now_stepi] = False
         block.attn1.processor.need_cache_output = False
     raw_outs = m.forward(*args, **kwargs)
     for blocki, block in enumerate(m.transformer_blocks):
         if now_stepi == 0:
             continue
-        # calibrate attn1
+        # Currently, we only compress `attn1` in each block. `attn2` is not handled.
         for attni, attn in enumerate([block.attn1]):
             if attn is None or not isinstance(attn.processor, FastAttnProcessor):
                 continue
-            if attni == 0:
-                # default methods are ['output_share', 'residual_window_attn+cfg_attn_share', 'residual_window_attn', 'full_attn+cfg_attn_share']
-                method_candidates = block.method_candidates
-            else:
-                method_candidates = ["full_attn+cfg_attn_share", "output_share"]
+            method_candidates = block.method_candidates
             selected_method = "full_attn"
             for method in method_candidates:
+                # Try compress this attention using `method`
                 attn.processor.steps_method[now_stepi] = method
-                # compute output
+
+                # Set the timestep index of every layer back to now_stepi
+                # (which are increased by one in every forward)
                 for _block in m.transformer_blocks:
                     for layer in _block.children():
                         layer.stepi = now_stepi
-                outs = m.forward(*args, **kwargs)  # .cpu().numpy()
+
+                # Compute the overall transformer output
+                outs = m.forward(*args, **kwargs)
 
                 l = compression_loss(raw_outs, outs)
                 threshold = m.loss_thresholds[now_stepi][blocki]
@@ -88,11 +92,17 @@ def transformer_forward_pre_hook(m: Transformer2DModel, args, kwargs):
             attn.processor.steps_method[now_stepi] = selected_method
             print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
 
+    # Set the timestep index of every layer back to now_stepi
+    # (which are increased by one in every forward)
     for _block in m.transformer_blocks:
         for layer in _block.children():
             layer.stepi = now_stepi
 
     for blocki, block in enumerate(m.transformer_blocks):
+        # During the compression plan decision process,
+        # we set the `need_compute_residual` property of all attention modules to `True`,
+        # so that all full attention modules will save its residual for convenience.
+        # The residual will be saved in the follow-up forward call.
         block.attn1.processor.need_compute_residual[now_stepi] = True
         block.attn1.processor.need_cache_output = True
 
@@ -138,12 +148,14 @@ def transform_model_fast_attention(
                 )
             else:
                 block.method_candidates = [
-                    "output_share",
-                    "residual_window_attn+cfg_attn_share",
-                    "residual_window_attn",
-                    "full_attn+cfg_attn_share",
+                    "output_share",  # AST
+                    "residual_window_attn+cfg_attn_share",  # WA-RS + ASC
+                    "residual_window_attn",  # WA-RS
+                    "full_attn+cfg_attn_share",  # ASC
                 ]
             print(f"method_candidates of {blocki} {block.method_candidates}")
+
+            # Initialize all attention processors to the `full_attn` strategy
             block.attn1.processor = FastAttnProcessor(
                 window_size, ["full_attn" for _ in range(n_steps)]
             )
@@ -160,12 +172,12 @@ def transform_model_fast_attention(
                     block.ff.net, ["full_attn" for _ in range(n_steps)]
                 )
 
-        # threshold for each layer
+        # Setup loss threshold for each timestep and layer
         loss_thresholds = []
         for step_i in range(n_steps):
             sub_list = []
             for blocki in range(len(blocks)):
-                threshold_i = (blocki + 1) / n_steps * threshold
+                threshold_i = (blocki + 1) / len(blocks) * threshold
                 sub_list.append(threshold_i)
             loss_thresholds.append(sub_list)
 
