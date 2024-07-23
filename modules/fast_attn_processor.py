@@ -7,9 +7,11 @@ import torch.nn as nn
 
 
 class FastAttnProcessor:
-    def __init__(self, window_size, steps_method):
+    def __init__(self, window_size, steps_method, cond_first):
         self.window_size = window_size
         self.steps_method = steps_method
+        # CFG order flag (conditional first or unconditional first)
+        self.cond_first = cond_first
         # Check at which timesteps do we need to compute the full-window residual
         # of this attention module
         self.need_compute_residual = self.compute_need_compute_residual(steps_method)
@@ -50,11 +52,20 @@ class FastAttnProcessor:
                 # TODO: Maybe use the conditional branch's attention output
                 # as the unconditional's is better
                 batch_size = hidden_states.shape[0]
-                hidden_states = hidden_states[: batch_size // 2]
+                if self.cond_first:
+                    hidden_states = hidden_states[ :batch_size // 2]
+                else:
+                    hidden_states = hidden_states[ batch_size // 2:]
                 if encoder_hidden_states is not None:
-                    encoder_hidden_states = encoder_hidden_states[: batch_size // 2]
+                    if self.cond_first:
+                        encoder_hidden_states = encoder_hidden_states[ :batch_size // 2]
+                    else:
+                        encoder_hidden_states = encoder_hidden_states[batch_size // 2: ]
                 if attention_mask is not None:
-                    attention_mask = attention_mask[: batch_size // 2]
+                    if self.cond_first:
+                        attention_mask = attention_mask[ :batch_size // 2]
+                    else:
+                        attention_mask = attention_mask[batch_size // 2: ]
 
             if m.spatial_norm is not None:
                 hidden_states = m.spatial_norm(hidden_states, temb)
@@ -224,15 +235,28 @@ class FastAttnProcessor:
         else:
             if "cfg_attn_share" in method:
                 batch_size = hidden_states.shape[0]
-                diff = (
-                    hidden_states[: batch_size // 2] - hidden_states[batch_size // 2 :]
-                )
+                if self.cond_first:
+                    diff = (
+                        hidden_states[ :batch_size // 2] - hidden_states[batch_size // 2: ]
+                    )
+                    hidden_states = hidden_states[:batch_size // 2]
+                else:
+                    diff = (
+                        hidden_states[batch_size // 2: ] - hidden_states[ :batch_size // 2]
+                    )
+                    hidden_states = hidden_states[batch_size // 2:]
                 # print(f"cfg_attn_share hidden_states {hidden_states.shape} max_diff={diff.abs().max()}")
-                hidden_states = hidden_states[: batch_size // 2]
+
                 if encoder_hidden_states is not None:
-                    encoder_hidden_states = encoder_hidden_states[: batch_size // 2]
+                    if self.cond_first:
+                        encoder_hidden_states = encoder_hidden_states[:batch_size // 2]
+                    else:
+                        encoder_hidden_states = encoder_hidden_states[batch_size // 2:]
                 if attention_mask is not None:
-                    attention_mask = attention_mask[: batch_size // 2]
+                    if self.cond_first:
+                        attention_mask = attention_mask[:batch_size // 2]
+                    else:
+                        attention_mask = attention_mask[batch_size // 2:]
             x = hidden_states
             B, N, C = x.shape
             # flash attn is not memory efficient for small sequences, this is empirical

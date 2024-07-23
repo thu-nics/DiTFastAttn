@@ -2,17 +2,10 @@ import torch
 from diffusers.models.attention_processor import Attention, AttnProcessor2_0
 from diffusers.models.transformers.transformer_2d import Transformer2DModel
 import functools
-import torch.nn.functional as F
-from skimage.metrics import structural_similarity
-import matplotlib.pyplot as plt
 import collections
-import numpy as np
 from modules.fast_feed_forward import FastFeedForward
 from modules.fast_attn_processor import FastAttnProcessor
 import os
-import time
-from utils import set_profile_transformer_block_hook, process_profile_transformer_block
-import json
 
 
 def set_stepi_warp(pipe):
@@ -91,6 +84,8 @@ def transformer_forward_pre_hook(m: Transformer2DModel, args, kwargs):
 
             attn.processor.steps_method[now_stepi] = selected_method
             print(f"Block {blocki} attn{attni} stepi{now_stepi} {selected_method}")
+            del l,outs
+    del raw_outs
 
     # Set the timestep index of every layer back to now_stepi
     # (which are increased by one in every forward)
@@ -120,6 +115,7 @@ def transform_model_fast_attention(
     sequential_calib=False,
     debug=False,
     ablation="",
+    cond_first=False,
 ):
     pipe = set_stepi_warp(raw_pipe)
     blocks = pipe.transformer.transformer_blocks
@@ -157,12 +153,12 @@ def transform_model_fast_attention(
 
             # Initialize all attention processors to the `full_attn` strategy
             block.attn1.processor = FastAttnProcessor(
-                window_size, ["full_attn" for _ in range(n_steps)]
+                window_size, ["full_attn" for _ in range(n_steps)], cond_first=cond_first
             )
             block.attn1.processor.need_compute_residual = [True for _ in range(n_steps)]
             if is_transform_attn2:
                 block.attn2.processor = FastAttnProcessor(
-                    window_size, ["full_attn" for _ in range(n_steps)]
+                    window_size, ["full_attn" for _ in range(n_steps)], cond_first=cond_first
                 )
                 block.attn2.processor.need_compute_residual = [
                     True for _ in range(n_steps)
@@ -193,7 +189,7 @@ def transform_model_fast_attention(
             calib_x,
             num_inference_steps=n_steps,
             generator=torch.manual_seed(seed),
-            output_type="np",
+            output_type="latent",
             return_dict=False,
         )
 
@@ -222,11 +218,11 @@ def transform_model_fast_attention(
     # set processor
     for blocki, block in enumerate(blocks):
         block.attn1.processor = FastAttnProcessor(
-            window_size, blocks_methods[blocki]["attn1"]
+            window_size, blocks_methods[blocki]["attn1"], cond_first=cond_first
         )
         if blocks_methods[blocki]["attn2"] is not None:
             block.attn2.processor = FastAttnProcessor(
-                window_size, blocks_methods[blocki]["attn2"]
+                window_size, blocks_methods[blocki]["attn2"], cond_first=cond_first
             )
         if blocks_methods[blocki]["ff"] is not None:
             block.ff = FastFeedForward(block.ff.net, blocks_methods[blocki]["ff"])

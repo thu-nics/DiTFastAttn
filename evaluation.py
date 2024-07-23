@@ -1,4 +1,5 @@
 from torchvision.transforms import functional as F
+from torchvision import transforms
 import torch.nn.functional
 import torch
 import torch.nn as nn
@@ -44,7 +45,7 @@ def evaluate_template_matching(order_list, cal_cost, pipe):
 def preprocess_image(image):
     image = torch.tensor(image).unsqueeze(0)
     image = image.permute(0, 3, 1, 2) / 255.0
-    return F.center_crop(image, (256, 256))
+    return F.center_crop(image, (299, 299))
 
 
 def save_output_hook(m, i, o):
@@ -113,8 +114,9 @@ def evaluate_quantitative_scores(
     fake_image_path="output/fake_images",
 ):
     results = {}
+    device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     # Inception Score
-    inception = InceptionScore()
+    inception = InceptionScore().to(device)
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
@@ -136,7 +138,7 @@ def evaluate_quantitative_scores(
         )
         torch_images = torch.nn.functional.interpolate(
             torch_images, size=(299, 299), mode="bilinear", align_corners=False
-        )
+        ).to(device)
         inception.update(torch_images)
 
         for j, image in enumerate(fake_images):
@@ -147,9 +149,8 @@ def evaluate_quantitative_scores(
     results["IS"] = IS
     print(f"Inception Score: {IS}")
 
-    device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     fid_value = calculate_fid_given_paths(
-        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8
+        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8,
     )
     results["FID"] = fid_value
     print(f"FID: {fid_value}")
@@ -168,9 +169,10 @@ def evaluate_quantitative_scores_text2img(
     reuse_generated=True,
 ):
     results = {}
+    device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     # Inception Score
-    inception = InceptionScore()
-    clip = CLIPScore(model_name_or_path="openai/clip-vit-base-patch16")
+    inception = InceptionScore().to(device)
+    clip = CLIPScore(model_name_or_path="openai/clip-vit-base-patch16").to(device)
     # FID
     np.random.seed(seed)
     generator = torch.manual_seed(seed)
@@ -194,10 +196,9 @@ def evaluate_quantitative_scores_text2img(
         if len(torch_images) > 0:
             torch_images = torch.cat(torch_images, dim=0)
             print(torch_images.shape)
-            # TODO: make sure the interpolated size is 256 or 299?
             torch_images = torch.nn.functional.interpolate(
-                torch_images, size=(256, 256), mode="bilinear", align_corners=False
-            )
+                torch_images, size=(299, 299), mode="bilinear", align_corners=False
+            ).to(device)
             inception.update(torch_images)
             clip.update(torch_images, caption_list[: len(torch_images)])
         else:
@@ -214,8 +215,8 @@ def evaluate_quantitative_scores_text2img(
                 torch.Tensor(fake_images * 255).byte().permute(0, 3, 1, 2).contiguous()
             )
             torch_images = torch.nn.functional.interpolate(
-                torch_images, size=(256, 256), mode="bilinear", align_corners=False
-            )
+                torch_images, size=(299, 299), mode="bilinear", align_corners=False
+            ).to(device)
             inception.update(torch_images)
             clip.update(torch_images, caption_list)
             for j, image in enumerate(fake_images):
@@ -233,7 +234,7 @@ def evaluate_quantitative_scores_text2img(
 
     device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     fid_value = calculate_fid_given_paths(
-        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8
+        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8, 
     )
     results["FID"] = fid_value
     print(f"FID: {fid_value}")

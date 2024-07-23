@@ -94,7 +94,7 @@ model_zoo
 *.log
 build/
 dist/
-# *.ipynb
+*.ipynb
 lightning_logs/
 /work_dirs
 .history
@@ -141,7 +141,8 @@ model_zoo
 *.log
 build/
 dist/
-#  *.ipynb
+*.ipynb
 lightning_logs/
 /work_dirs
+plot/
 .history

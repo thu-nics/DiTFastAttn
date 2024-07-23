@@ -14,6 +14,7 @@ from utils import calculate_flops
 from opensora.models.layers.blocks import Attention
 
 import colossalai
+
 import torch
 import torch.distributed as dist
 from colossalai.cluster import DistCoordinator
@@ -118,6 +119,7 @@ def main():
             seed=3,
             sequential_calib=cfg.sequential_calib,
             debug=cfg.debug,
+            cond_first=True,
         )
 
     cfg.batch_size = 1

@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="facebook/DiT-XL-2-512")
     parser.add_argument("--n_calib", type=int, default=4)
-    parser.add_argument("--n_steps", type=int, default=20)
+    parser.add_argument("--n_steps", type=int, default=50)
     parser.add_argument("--threshold", type=float, default=1)
     parser.add_argument("--window_size", type=int, default=128)
     parser.add_argument("--sequential_calib", action="store_true")
@@ -44,6 +44,7 @@ def main():
             sequential_calib=args.sequential_calib,
             debug=args.debug,
             ablation=args.ablation,
+            cond_first=True
         )
         # evaluate the results
         if args.ablation != "":

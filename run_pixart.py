@@ -19,14 +19,14 @@ def main():
         "--model", type=str, default="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
     )
     parser.add_argument("--n_calib", type=int, default=8)
-    parser.add_argument("--n_steps", type=int, default=20)
+    parser.add_argument("--n_steps", type=int, default=50)
     parser.add_argument("--threshold", type=float, default=1)
     parser.add_argument("--window_size", type=int, default=64)
     parser.add_argument("--sequential_calib", action="store_true")
-    parser.add_argument("--eval_real_image_path", type=str, default="data/real_images")
+    parser.add_argument("--eval_real_image_path", type=str, default="data/processed_coco_images")
     parser.add_argument("--coco_path", type=str, default="data/mscoco")
     parser.add_argument("--eval_n_images", type=int, default=5000)
-    parser.add_argument("--eval_batchsize", type=int, default=2)
+    parser.add_argument("--eval_batchsize", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--raw_eval", action="store_true")
@@ -80,6 +80,7 @@ def main():
             seed=3,
             sequential_calib=args.sequential_calib,
             debug=args.debug,
+            cond_first=False
         )
 
         fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_seq{args.sequential_calib}"
