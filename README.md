@@ -1,5 +1,7 @@
 # DiTFastAttn: Attention Compression for Diffusion Transformer Models
 
+![intro](assets/intro.png)
+
 Diffusion Transformers (DiT) excel at image and video generation but face computational challenges due to self-attention's quadratic complexity. We propose DiTFastAttn, a novel post-training compression method to alleviate DiT's computational bottleneck. We identify three key redundancies in the attention computation during DiT inference:
 1. Spatial redundancy, where many attention heads focus on local information.
 2. Temporal redundancy, with high similarity between neighboring steps' attention outputs.
@@ -11,6 +13,8 @@ To tackle these redundancies, we propose three techniques:
 3. Conditional Redundancy Elimination to skip redundant computations during conditional generation.
 
 Please read our [paper](https://arxiv.org/pdf/2406.08552) for more detailed information.
+
+![compress plan](assets/compression_plan_curr.png)
 
 # Install
 
@@ -39,12 +43,12 @@ All the experiment code can be found in folder `experiments/`.
 
 DiT compression:
 ```
-python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.05 --eval_n_images 5000
+python run_dit.py --n_calib 8 --n_steps 50 --window_size 128 --threshold 0.05 --eval_n_images 5000
 ```
 
 PixArt 1k compression:
 ```
-python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.0725 --eval_n_images 5000
+python run_pixart.py --n_calib 6 --n_steps 50 --window_size 512 --threshold 0.0725 --eval_n_images 5000
 
 ```
 
@@ -53,6 +57,10 @@ Opensora compression:
 python run_opensora.py --threshold 0.05 --window_size 50 --n_calib 4 --use_cache
 ```
 Note that before using opensora, you should install the opensora according to the readme from `https://github.com/hpcaitech/Open-Sora`. Because the opensora is under development. You should switch to commit id `ea41df3d6cc5f38` of opensora if you meet some problem.
+
+# Updates
+
+Check CHANGELOGS.md for updates
 
 # Citation
 

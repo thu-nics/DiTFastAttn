@@ -11,8 +11,9 @@ import os
 import json
 import numpy as np
 from utils import calculate_flops
-from opensora.models.layers.blocks import Attention
 
+# from opensora.models.layers.blocks import Attention
+from modules.opensora_attn import Attention
 import colossalai
 
 import torch
@@ -68,9 +69,7 @@ def main():
     input_size = (cfg.num_frames, *cfg.image_size)
     vae = build_module(cfg.vae, MODELS)
     latent_size = vae.get_latent_size(input_size)
-    text_encoder = build_module(
-        cfg.text_encoder, MODELS, device="cpu"
-    )  # T5 must be fp32
+    text_encoder = build_module(cfg.text_encoder, MODELS, device="cpu")  # T5 must be fp32
 
     model = build_module(
         cfg.model,
@@ -94,10 +93,27 @@ def main():
 
     cfg.n_steps = cfg.scheduler.num_sampling_steps
     cfg.batch_size = cfg.n_calib
-    save_dir += f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}"
+    save_dir += f"_{cfg.n_calib}_{cfg.n_steps}_{cfg.threshold}_{cfg.window_size}_{cfg.image_size}_test"
     os.makedirs(save_dir, exist_ok=True)
     pipe = OpensoraPipe(cfg, text_encoder, model, vae, scheduler, save_dir)
     for blocki, block in enumerate(pipe.transformer.blocks):
+        # torch.cuda.empty_cache()
+        q_norm = block.attn.q_norm
+        k_norm = block.attn.k_norm
+        qkv = block.attn.qkv
+        proj = block.attn.proj
+        block.attn = Attention(
+            block.attn.dim,
+            block.attn.num_heads,
+            block.attn.attn_drop,
+            block.attn.proj_drop,
+            block.attn.enable_flash_attn,
+            block.attn.rope,
+        ).to(device, dtype)
+        block.attn.q_norm = q_norm
+        block.attn.k_norm = k_norm
+        block.attn.qkv = qkv
+        block.attn.proj = proj
         block.attn1 = block.attn
 
     pipe.transformer.transformer_blocks = pipe.transformer.blocks
@@ -108,7 +124,7 @@ def main():
     # macs, attn_mac=opensora_calculate_flops(pipe, prompts[:1])
 
     if cfg.threshold > 0:
-        pipe = transform_model_fast_attention(
+        pipe, search_time = transform_model_fast_attention(
             pipe,
             n_steps=cfg.n_steps,
             n_calib=cfg.n_calib,
@@ -126,7 +142,7 @@ def main():
     macs, attn_mac = opensora_calculate_flops(pipe, prompts[:1])
 
     with open("output/opensora_results.txt", "a+") as f:
-        f.write(f"{cfg}\n{save_dir}\nmacs={macs}\nattn_mac={attn_mac}\n\n")
+        f.write(f"{cfg}\n{save_dir}\nmacs={macs}\nattn_mac={attn_mac}\nsearch time={search_time}\n\n")
 
     set_random_seed(seed=cfg.seed)
     pipe(prompts)

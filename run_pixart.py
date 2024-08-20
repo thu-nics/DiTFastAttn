@@ -15,21 +15,23 @@ from utils import calculate_flops
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--model", type=str, default="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
-    )
+    parser.add_argument("--model", type=str, default="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS")
     parser.add_argument("--n_calib", type=int, default=8)
     parser.add_argument("--n_steps", type=int, default=50)
     parser.add_argument("--threshold", type=float, default=1)
     parser.add_argument("--window_size", type=int, default=64)
     parser.add_argument("--sequential_calib", action="store_true")
-    parser.add_argument("--eval_real_image_path", type=str, default="data/processed_coco_images")
+    parser.add_argument("--eval_real_image_path", type=str, default="data/real_images_coco_30k")
     parser.add_argument("--coco_path", type=str, default="data/mscoco")
-    parser.add_argument("--eval_n_images", type=int, default=5000)
+    parser.add_argument("--eval_n_images", type=int, default=30000)
     parser.add_argument("--eval_batchsize", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--use_cache", action="store_true")
     parser.add_argument("--raw_eval", action="store_true")
+    parser.add_argument("--negative_prompt", type=str, default="")
+    parser.add_argument("--seed", type=int, default=3)
+    parser.add_argument("--metric", type=str, default="")
+    parser.add_argument("--cfg_scale", type=float, default=4.5)
     args = parser.parse_args()
 
     if args.model in [
@@ -57,11 +59,11 @@ def main():
     else:
         raise NotImplementedError
 
-    with open(f"{args.coco_path}/annotations/captions_val2017.json") as f:
+    with open(f"{args.coco_path}/annotations/captions_val2014.json") as f:
         mscoco_anno = json.load(f)
 
     # set seed
-    np.random.seed(3)
+    np.random.seed(args.seed)
     slice_ = np.random.choice(mscoco_anno["annotations"], args.n_calib)
     calib_x = [d["caption"] for d in slice_]
 
@@ -69,7 +71,7 @@ def main():
         fake_image_path = f"output/{args.model.replace('/','_')}_steps{args.n_steps}"
     else:
 
-        pipe = transform_model_fast_attention(
+        pipe, search_time = transform_model_fast_attention(
             pipe,
             n_steps=args.n_steps,
             n_calib=args.n_calib,
@@ -77,13 +79,19 @@ def main():
             threshold=args.threshold,
             window_size=[-args.window_size, args.window_size],
             use_cache=args.use_cache,
-            seed=3,
+            seed=args.seed,
             sequential_calib=args.sequential_calib,
             debug=args.debug,
-            cond_first=False
+            cond_first=False,
+            negative_prompt=args.negative_prompt,
+            guidance_scale=args.cfg_scale,
         )
 
-        fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_seq{args.sequential_calib}"
+        fake_image_path = f"output/{args.model.replace('/','_')}_calib{args.n_calib}_steps{args.n_steps}_threshold{args.threshold}_window{args.window_size}_seq{args.sequential_calib}_evalsize{args.eval_n_images}_cfg_scale{args.cfg_scale}"
+        if args.metric != "":
+            fake_image_path = fake_image_path + f"_metric{args.metric}"
+        if args.negative_prompt != "":
+            fake_image_path = fake_image_path + f"_negative_prompt{args.negative_prompt}"
 
     macs, attn_mac = calculate_flops(pipe, calib_x[0:1], n_steps=args.n_steps)
     latencies = test_latencies(
@@ -94,6 +102,8 @@ def main():
             1,
         ],
     )
+    memory_allocated = torch.cuda.max_memory_allocated(device=torch.device("cuda")) / (1024**2)
+    memory_cached = torch.cuda.max_memory_cached(device=torch.device("cuda")) / (1024**2)
     if args.debug:
         result = {}
     else:
@@ -105,12 +115,15 @@ def main():
             args.eval_batchsize,
             num_inference_steps=args.n_steps,
             fake_image_path=fake_image_path,
+            negative_prompt=args.negative_prompt,
+            seed=args.seed,
+            guidance_scale=args.cfg_scale,
         )
     # save the result
     print(result)
     with open("output/results.txt", "a+") as f:
         f.write(
-            f"{args}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\n\n"
+            f"{args}\n{result}\nmacs={macs}\nattn_mac={attn_mac}\nlatencies={latencies}\nmemory allocated={memory_allocated}MB\nmemory cached={memory_cached}MB\nsearch time={search_time}s\n\n"
         )
 
 

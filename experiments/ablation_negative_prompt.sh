@@ -1,0 +1,7 @@
+CUDA_VISIBLE_DEVICES=0 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.0 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=1 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.025 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=2 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.05 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=3 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.075 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=4 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.1 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=5 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.125 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"
+CUDA_VISIBLE_DEVICES=6 python run_pixart.py --n_calib 6 --n_steps 20 --window_size 512 --threshold 0.15 --eval_n_images 5000 --use_cache --eval_real_image_path data/real_images_coco_5k --negative_prompt "low quality"

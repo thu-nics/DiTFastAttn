@@ -146,3 +146,12 @@ lightning_logs/
 /work_dirs
 plot/
 .history
+*.npz
+*.pb
+final_dataset_construct.py
+evaluator.py
+dit_fast_attention_cfg_ablation.py
+evaluation_cfg_ablation.py
+run_dit_cfg_ablation.py
+/model
+model/*

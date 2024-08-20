@@ -52,9 +52,7 @@ def save_output_hook(m, i, o):
     m.saved_output = o
 
 
-def test_latencies(
-    pipe, n_steps, calib_x, bs, only_transformer=True, test_attention=True
-):
+def test_latencies(pipe, n_steps, calib_x, bs, only_transformer=True, test_attention=True):
     latencies = {}
     for b in bs:
         pipe([calib_x[0] for _ in range(b)], num_inference_steps=n_steps)
@@ -69,9 +67,7 @@ def test_latencies(
             pipe([calib_x[0] for _ in range(b)], num_inference_steps=1)
             handler.remove()
             old_forward = pipe.transformer.forward
-            pipe.transformer.forward = (
-                lambda *arg, **kwargs: pipe.transformer.saved_output
-            )
+            pipe.transformer.forward = lambda *arg, **kwargs: pipe.transformer.saved_output
             st = time.time()
             for i in range(3):
                 pipe([calib_x[0] for _ in range(b)], num_inference_steps=n_steps)
@@ -107,11 +103,12 @@ def test_latencies(
 def evaluate_quantitative_scores(
     pipe,
     real_image_path,
-    n_images=5000,
+    n_images=50000,
     batchsize=1,
     seed=3,
     num_inference_steps=20,
     fake_image_path="output/fake_images",
+    guidance_scale=4,
 ):
     results = {}
     device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
@@ -130,12 +127,11 @@ def evaluate_quantitative_scores(
             generator=generator,
             output_type="np",
             num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
         )
         fake_images = output.images
         # Inception Score
-        torch_images = (
-            torch.Tensor(fake_images * 255).byte().permute(0, 3, 1, 2).contiguous()
-        )
+        torch_images = torch.Tensor(fake_images * 255).byte().permute(0, 3, 1, 2).contiguous()
         torch_images = torch.nn.functional.interpolate(
             torch_images, size=(299, 299), mode="bilinear", align_corners=False
         ).to(device)
@@ -150,7 +146,11 @@ def evaluate_quantitative_scores(
     print(f"Inception Score: {IS}")
 
     fid_value = calculate_fid_given_paths(
-        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8,
+        [real_image_path, fake_image_path],
+        64,
+        device,
+        dims=2048,
+        num_workers=8,
     )
     results["FID"] = fid_value
     print(f"FID: {fid_value}")
@@ -167,6 +167,8 @@ def evaluate_quantitative_scores_text2img(
     num_inference_steps=20,
     fake_image_path="output/fake_images",
     reuse_generated=True,
+    negative_prompt="",
+    guidance_scale=4.5,
 ):
     results = {}
     device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
@@ -207,13 +209,13 @@ def evaluate_quantitative_scores_text2img(
                 generator=generator,
                 output_type="np",
                 num_inference_steps=num_inference_steps,
+                negative_prompt=negative_prompt,
+                guidance_scale=guidance_scale,
             )
             fake_images = output.images
             # Inception Score
             count = 0
-            torch_images = (
-                torch.Tensor(fake_images * 255).byte().permute(0, 3, 1, 2).contiguous()
-            )
+            torch_images = torch.Tensor(fake_images * 255).byte().permute(0, 3, 1, 2).contiguous()
             torch_images = torch.nn.functional.interpolate(
                 torch_images, size=(299, 299), mode="bilinear", align_corners=False
             ).to(device)
@@ -234,7 +236,11 @@ def evaluate_quantitative_scores_text2img(
 
     device = torch.device("cuda" if (torch.cuda.is_available()) else "cpu")
     fid_value = calculate_fid_given_paths(
-        [real_image_path, fake_image_path], 64, device, dims=2048, num_workers=8, 
+        [real_image_path, fake_image_path],
+        64,
+        device,
+        dims=2048,
+        num_workers=8,
     )
     results["FID"] = fid_value
     print(f"FID: {fid_value}")
@@ -278,8 +284,6 @@ def method_speed_test(pipe):
                     attn(x)
                 torch.cuda.synchronize()
                 et = time.time()
-                print(
-                    f"Method {method} need_compute_residual {need_compute_residual} time {et-st}"
-                )
+                print(f"Method {method} need_compute_residual {need_compute_residual} time {et-st}")
                 all_results.append(et - st)
         print(all_results)

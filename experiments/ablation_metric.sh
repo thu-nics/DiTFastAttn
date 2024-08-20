@@ -1,0 +1,7 @@
+CUDA_VISIBLE_DEVICES=0 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.005 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=1 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.01 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=2 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.015 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=3 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.02 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=4 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.05 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=5 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.1 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=6 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.15 --eval_n_images 5000 --metric "ssim" --eval_real_image_path "data/real_images" --use_cache &

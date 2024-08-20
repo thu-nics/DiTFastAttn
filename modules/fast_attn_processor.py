@@ -3,7 +3,10 @@ from diffusers.models.attention_processor import Attention, AttnProcessor2_0
 from typing import Optional
 import torch.nn.functional as F
 import flash_attn
+
+# from natten.functional import na1d, na2d
 import torch.nn as nn
+import math
 
 
 class FastAttnProcessor:
@@ -24,10 +27,7 @@ class FastAttnProcessor:
             need = False
             if "full_attn" in method:
                 for j in range(i + 1, len(steps_method)):
-                    if (
-                        "residual_window_attn" in steps_method[j]
-                        and "without_residual" not in steps_method[j]
-                    ):
+                    if "residual_window_attn" in steps_method[j] and "without_residual" not in steps_method[j]:
                         # If encountered a step that conduct WA-RS,
                         # this step needs the residual computation
                         need = True
@@ -38,9 +38,7 @@ class FastAttnProcessor:
             need_compute_residual.append(need)
         return need_compute_residual
 
-    def run_forward_method(
-        self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method
-    ):
+    def run_forward_method(self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method):
         residual = hidden_states
         if method == "output_share":
             hidden_states = m.cached_output
@@ -53,19 +51,19 @@ class FastAttnProcessor:
                 # as the unconditional's is better
                 batch_size = hidden_states.shape[0]
                 if self.cond_first:
-                    hidden_states = hidden_states[ :batch_size // 2]
+                    hidden_states = hidden_states[: batch_size // 2]
                 else:
-                    hidden_states = hidden_states[ batch_size // 2:]
+                    hidden_states = hidden_states[batch_size // 2 :]
                 if encoder_hidden_states is not None:
                     if self.cond_first:
-                        encoder_hidden_states = encoder_hidden_states[ :batch_size // 2]
+                        encoder_hidden_states = encoder_hidden_states[: batch_size // 2]
                     else:
-                        encoder_hidden_states = encoder_hidden_states[batch_size // 2: ]
+                        encoder_hidden_states = encoder_hidden_states[batch_size // 2 :]
                 if attention_mask is not None:
                     if self.cond_first:
-                        attention_mask = attention_mask[ :batch_size // 2]
+                        attention_mask = attention_mask[: batch_size // 2]
                     else:
-                        attention_mask = attention_mask[batch_size // 2: ]
+                        attention_mask = attention_mask[batch_size // 2 :]
 
             if m.spatial_norm is not None:
                 hidden_states = m.spatial_norm(hidden_states, temb)
@@ -74,38 +72,26 @@ class FastAttnProcessor:
 
             if input_ndim == 4:
                 batch_size, channel, height, width = hidden_states.shape
-                hidden_states = hidden_states.view(
-                    batch_size, channel, height * width
-                ).transpose(1, 2)
+                hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
             batch_size, sequence_length, _ = (
-                hidden_states.shape
-                if encoder_hidden_states is None
-                else encoder_hidden_states.shape
+                hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
             )
             if attention_mask is not None:
-                attention_mask = m.prepare_attention_mask(
-                    attention_mask, sequence_length, batch_size
-                )
+                attention_mask = m.prepare_attention_mask(attention_mask, sequence_length, batch_size)
                 # scaled_dot_product_attention expects attention_mask shape to be
                 # (batch, heads, source_length, target_length)
-                attention_mask = attention_mask.view(
-                    batch_size, m.heads, -1, attention_mask.shape[-1]
-                )
+                attention_mask = attention_mask.view(batch_size, m.heads, -1, attention_mask.shape[-1])
 
             if m.group_norm is not None:
-                hidden_states = m.group_norm(hidden_states.transpose(1, 2)).transpose(
-                    1, 2
-                )
+                hidden_states = m.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
             query = m.to_q(hidden_states)
 
             if encoder_hidden_states is None:
                 encoder_hidden_states = hidden_states
             elif m.norm_cross:
-                encoder_hidden_states = m.norm_encoder_hidden_states(
-                    encoder_hidden_states
-                )
+                encoder_hidden_states = m.norm_encoder_hidden_states(encoder_hidden_states)
 
             key = m.to_k(encoder_hidden_states)
             value = m.to_v(encoder_hidden_states)
@@ -133,9 +119,7 @@ class FastAttnProcessor:
                 all_hidden_states = flash_attn.flash_attn_func(query, key, value)
                 if self.need_compute_residual[m.stepi]:
                     # Compute the full-window attention residual
-                    w_hidden_states = flash_attn.flash_attn_func(
-                        query, key, value, window_size=self.window_size
-                    )
+                    w_hidden_states = flash_attn.flash_attn_func(query, key, value, window_size=self.window_size)
                     residual = all_hidden_states - w_hidden_states
                     if "cfg_attn_share" in method:
                         residual = torch.cat([residual, residual], dim=0)
@@ -143,17 +127,25 @@ class FastAttnProcessor:
                     m.cached_residual = residual
                 hidden_states = all_hidden_states
             elif "residual_window_attn" in method:
-                w_hidden_states = flash_attn.flash_attn_func(
-                    query, key, value, window_size=self.window_size
-                )
+                w_hidden_states = flash_attn.flash_attn_func(query, key, value, window_size=self.window_size)
+
+                # natten 2d
+                # height = int(math.sqrt(query.shape[1]))
+                # weight = height
+                # q_2d = query.permute(0, 2, 1, 3).view(batch_size, m.heads, height, weight, head_dim)
+                # k_2d = key.permute(0, 2, 1, 3).view(batch_size, m.heads, height, weight, head_dim)
+                # v_2d = value.permute(0, 2, 1, 3).view(batch_size, m.heads, height, weight, head_dim)
+                # w_hidden_states = na2d(q_2d, k_2d, v_2d, kernel_size=5)
+
+                # natten 1d
+                # w_hidden_states = na1d(query, key, value, kernel_size=self.window_size[1] * 2 - 1)
+
                 if "without_residual" in method:
                     # For ablation study of `residual_window_attn+without_residual`
                     # v.s. `residual_window_attn`
                     hidden_states = w_hidden_states
                 else:
-                    hidden_states = w_hidden_states + m.cached_residual[
-                        :batch_size
-                    ].view_as(w_hidden_states)
+                    hidden_states = w_hidden_states + m.cached_residual[:batch_size].view_as(w_hidden_states)
 
             hidden_states = hidden_states.reshape(batch_size, -1, m.heads * head_dim)
             hidden_states = hidden_states.to(query.dtype)
@@ -164,9 +156,7 @@ class FastAttnProcessor:
             hidden_states = m.to_out[1](hidden_states)
 
             if input_ndim == 4:
-                hidden_states = hidden_states.transpose(-1, -2).reshape(
-                    batch_size, channel, height, width
-                )
+                hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
             if "cfg_attn_share" in method:
                 hidden_states = torch.cat([hidden_states, hidden_states], dim=0)
@@ -214,9 +204,7 @@ class FastAttnProcessor:
                     for i in range(attn.size()[-2]):
                         mask[
                             i,
-                            max(0, i + window_size[0]) : min(
-                                attn.size()[-1], i + window_size[1]
-                            ),
+                            max(0, i + window_size[0]) : min(attn.size()[-1], i + window_size[1]),
                         ] = 0
                 else:
                     mask = self.mask_cache[attn.size()]
@@ -227,36 +215,30 @@ class FastAttnProcessor:
             x = attn @ v
         return x
 
-    def run_opensora_forward_method(
-        self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method
-    ):
+    def run_opensora_forward_method(self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method):
         if method == "output_share":
             x = m.cached_output
         else:
             if "cfg_attn_share" in method:
                 batch_size = hidden_states.shape[0]
                 if self.cond_first:
-                    diff = (
-                        hidden_states[ :batch_size // 2] - hidden_states[batch_size // 2: ]
-                    )
-                    hidden_states = hidden_states[:batch_size // 2]
+                    diff = hidden_states[: batch_size // 2] - hidden_states[batch_size // 2 :]
+                    hidden_states = hidden_states[: batch_size // 2]
                 else:
-                    diff = (
-                        hidden_states[batch_size // 2: ] - hidden_states[ :batch_size // 2]
-                    )
-                    hidden_states = hidden_states[batch_size // 2:]
+                    diff = hidden_states[batch_size // 2 :] - hidden_states[: batch_size // 2]
+                    hidden_states = hidden_states[batch_size // 2 :]
                 # print(f"cfg_attn_share hidden_states {hidden_states.shape} max_diff={diff.abs().max()}")
 
                 if encoder_hidden_states is not None:
                     if self.cond_first:
-                        encoder_hidden_states = encoder_hidden_states[:batch_size // 2]
+                        encoder_hidden_states = encoder_hidden_states[: batch_size // 2]
                     else:
-                        encoder_hidden_states = encoder_hidden_states[batch_size // 2:]
+                        encoder_hidden_states = encoder_hidden_states[batch_size // 2 :]
                 if attention_mask is not None:
                     if self.cond_first:
-                        attention_mask = attention_mask[:batch_size // 2]
+                        attention_mask = attention_mask[: batch_size // 2]
                     else:
-                        attention_mask = attention_mask[batch_size // 2:]
+                        attention_mask = attention_mask[batch_size // 2 :]
             x = hidden_states
             B, N, C = x.shape
             # flash attn is not memory efficient for small sequences, this is empirical
@@ -276,18 +258,14 @@ class FastAttnProcessor:
                 x = self.sora_attention(m, q, k, v, enable_flash_attn)
 
                 if self.need_compute_residual[m.stepi]:
-                    w_x = self.sora_attention(
-                        m, q, k, v, enable_flash_attn, window_size=self.window_size
-                    )
+                    w_x = self.sora_attention(m, q, k, v, enable_flash_attn, window_size=self.window_size)
                     # w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
                     residual = x - w_x
                     if "cfg_attn_share" in method:
                         residual = torch.cat([residual, residual], dim=0)
                     m.cached_residual = residual
             elif "residual_window_attn" in method:
-                w_x = self.sora_attention(
-                    m, q, k, v, enable_flash_attn, window_size=self.window_size
-                )
+                w_x = self.sora_attention(m, q, k, v, enable_flash_attn, window_size=self.window_size)
                 # w_x=flash_attn.flash_attn_func(q, k, v,window_size=self.window_size,softmax_scale=m.scale)
                 x = w_x + m.cached_residual[:B].view_as(w_x)
 

@@ -23,9 +23,7 @@ def count_flops_attn(m: Attention, i, kwargs, o):
 
     if input_ndim == 4:
         batch_size, channel, height, width = hidden_states.shape
-        hidden_states = hidden_states.view(
-            batch_size, channel, height * width
-        ).transpose(1, 2)
+        hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
     batch_size, q_seq_len, dim = hidden_states.size()
 
     if encoder_hidden_states is None:
@@ -107,10 +105,7 @@ def set_profile_transformer_block_hook(block, verbose=False, report_missing=Fals
                 print("[INFO] Register %s() for %s." % (fn.__qualname__, m_type))
         else:
             if m_type not in types_collection and report_missing:
-                prRed(
-                    "[WARN] Cannot find rule for %s. Treat it as zero Macs and zero Params."
-                    % m_type
-                )
+                prRed("[WARN] Cannot find rule for %s. Treat it as zero Macs and zero Params." % m_type)
 
         if fn is not None:
             handler_collection[m] = (
@@ -133,9 +128,7 @@ def process_profile_transformer_block(block, handler_collection, ret_layer_info=
             # else:
             #     m_ops, m_params = m.total_ops, m.total_params
             next_dict = {}
-            if m in handler_collection and not isinstance(
-                m, (nn.Sequential, nn.ModuleList, Attention)
-            ):
+            if m in handler_collection and not isinstance(m, (nn.Sequential, nn.ModuleList, Attention)):
                 m_ops, m_params = m.total_ops.item(), m.total_params.item()
             else:
                 m_ops, m_params, next_dict = dfs_count(m, prefix=prefix + "\t")
@@ -200,10 +193,7 @@ def profile_pipe_transformer(
                 print("[INFO] Register %s() for %s." % (fn.__qualname__, m_type))
         else:
             if m_type not in types_collection and report_missing:
-                prRed(
-                    "[WARN] Cannot find rule for %s. Treat it as zero Macs and zero Params."
-                    % m_type
-                )
+                prRed("[WARN] Cannot find rule for %s. Treat it as zero Macs and zero Params." % m_type)
 
         if fn is not None:
             handler_collection[m] = (
@@ -233,9 +223,7 @@ def profile_pipe_transformer(
             # else:
             #     m_ops, m_params = m.total_ops, m.total_params
             next_dict = {}
-            if m in handler_collection and not isinstance(
-                m, (nn.Sequential, nn.ModuleList, Attention)
-            ):
+            if m in handler_collection and not isinstance(m, (nn.Sequential, nn.ModuleList, Attention)):
                 m_ops, m_params = m.total_ops.item(), m.total_params.item()
             else:
                 m_ops, m_params, next_dict = dfs_count(m, prefix=prefix + "\t")
@@ -248,15 +236,11 @@ def profile_pipe_transformer(
     total_ops, total_params, ret_dict = dfs_count(model)
 
     for name, module in model.named_modules():
-        if module.__class__.__name__ == "Attention" and (
-            "attn1" in name or "attn" in name
-        ):
+        if module.__class__.__name__ == "Attention" and ("attn1" in name or "attn" in name):
             attn_ops += module.total_ops.item()
             # print(f"attn1 {name} ops is {module.total_ops.item()}")
 
-        if module.__class__.__name__ == "Attention" and (
-            "attn2" in name or "cross_attn" in name
-        ):
+        if module.__class__.__name__ == "Attention" and ("attn2" in name or "cross_attn" in name):
             attn2_ops += module.total_ops.item()
             # print(f"attn2 {name} ops is {module.total_ops.item()}")
 
@@ -280,7 +264,5 @@ def calculate_flops(pipe, x, n_steps):
         verbose=0,
         ret_layer_info=True,
     )
-    print(
-        f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G"
-    )
+    print(f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G")
     return macs / 1e9, attn_ops / 1e9

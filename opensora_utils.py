@@ -11,7 +11,9 @@ import os
 import json
 import numpy as np
 from utils import calculate_flops
-from opensora.models.layers.blocks import Attention
+
+# from opensora.models.layers.blocks import Attention
+from modules.opensora_attn import Attention
 
 import colossalai
 import torch
@@ -41,9 +43,7 @@ def opensora_calculate_flops(pipe, x):
         verbose=0,
         ret_layer_info=True,
     )
-    print(
-        f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G"
-    )
+    print(f"macs is {macs/1e9} G, attn is {(attn_ops)/1e9} G, attn2_ops is {(attn2_ops)/1e9} G")
     return macs / 1e9, attn_ops / 1e9
 
 
@@ -51,9 +51,7 @@ def parse_args(training=False):
     parser = argparse.ArgumentParser()
 
     # model config
-    parser.add_argument(
-        "--config", default="data/sample.py", help="model config file path"
-    )
+    parser.add_argument("--config", default="data/sample.py", help="model config file path")
 
     # DiTFastAttn
     parser.add_argument("--n_calib", type=int, default=4)
@@ -81,21 +79,15 @@ def parse_args(training=False):
     # ======================================================
     if not training:
         # output
-        parser.add_argument(
-            "--save-dir", default=None, type=str, help="path to save generated samples"
-        )
+        parser.add_argument("--save-dir", default=None, type=str, help="path to save generated samples")
         parser.add_argument(
             "--sample-name",
             default=None,
             type=str,
             help="sample name, default is sample_idx",
         )
-        parser.add_argument(
-            "--start-index", default=None, type=int, help="start index for sample name"
-        )
-        parser.add_argument(
-            "--end-index", default=None, type=int, help="end index for sample name"
-        )
+        parser.add_argument("--start-index", default=None, type=int, help="start index for sample name")
+        parser.add_argument("--end-index", default=None, type=int, help="end index for sample name")
         parser.add_argument(
             "--num-sample",
             default=None,
@@ -109,26 +101,16 @@ def parse_args(training=False):
         )
 
         # prompt
-        parser.add_argument(
-            "--prompt-path", default=None, type=str, help="path to prompt txt file"
-        )
-        parser.add_argument(
-            "--prompt", default=None, type=str, nargs="+", help="prompt list"
-        )
+        parser.add_argument("--prompt-path", default=None, type=str, help="path to prompt txt file")
+        parser.add_argument("--prompt", default=None, type=str, nargs="+", help="prompt list")
 
         # image/video
-        parser.add_argument(
-            "--num-frames", default=None, type=int, help="number of frames"
-        )
+        parser.add_argument("--num-frames", default=None, type=int, help="number of frames")
         parser.add_argument("--fps", default=None, type=int, help="fps")
-        parser.add_argument(
-            "--image-size", default=None, type=int, nargs=2, help="image size"
-        )
+        parser.add_argument("--image-size", default=None, type=int, nargs=2, help="image size")
 
         # hyperparameters
-        parser.add_argument(
-            "--num-sampling-steps", default=None, type=int, help="sampling steps"
-        )
+        parser.add_argument("--num-sampling-steps", default=None, type=int, help="sampling steps")
         parser.add_argument(
             "--cfg-scale",
             default=None,
@@ -144,23 +126,15 @@ def parse_args(training=False):
             type=int,
             help="condition frame length",
         )
-        parser.add_argument(
-            "--reference-path", default=None, type=str, nargs="+", help="reference path"
-        )
-        parser.add_argument(
-            "--mask-strategy", default=None, type=str, nargs="+", help="mask strategy"
-        )
+        parser.add_argument("--reference-path", default=None, type=str, nargs="+", help="reference path")
+        parser.add_argument("--mask-strategy", default=None, type=str, nargs="+", help="mask strategy")
     # ======================================================
     # Training
     # ======================================================
     else:
         parser.add_argument("--wandb", default=None, type=bool, help="enable wandb")
-        parser.add_argument(
-            "--load", default=None, type=str, help="path to continue training"
-        )
-        parser.add_argument(
-            "--data-path", default=None, type=str, help="path to data csv"
-        )
+        parser.add_argument("--load", default=None, type=str, help="path to continue training")
+        parser.add_argument("--data-path", default=None, type=str, help="path to data csv")
         parser.add_argument(
             "--start-from-scratch",
             action="store_true",
@@ -205,9 +179,7 @@ def merge_args(cfg, args, training=False):
             cfg["prompt_as_path"] = False
         # - Prompt handling
         if "prompt" not in cfg or cfg["prompt"] is None:
-            assert (
-                cfg["prompt_path"] is not None
-            ), "prompt or prompt_path must be provided"
+            assert cfg["prompt_path"] is not None, "prompt or prompt_path must be provided"
 
             def load_prompts(prompt_path):
                 with open(prompt_path, "r") as f:
@@ -267,32 +239,18 @@ class OpensoraPipe:
         model_args = dict()
         if cfg.multi_resolution == "PixArtMS":
             image_size = cfg.image_size
-            hw = torch.tensor([image_size], device=device, dtype=dtype).repeat(
-                cfg.batch_size, 1
-            )
-            ar = torch.tensor(
-                [[image_size[0] / image_size[1]]], device=device, dtype=dtype
-            ).repeat(cfg.batch_size, 1)
+            hw = torch.tensor([image_size], device=device, dtype=dtype).repeat(cfg.batch_size, 1)
+            ar = torch.tensor([[image_size[0] / image_size[1]]], device=device, dtype=dtype).repeat(cfg.batch_size, 1)
             model_args["data_info"] = dict(ar=ar, hw=hw)
         elif cfg.multi_resolution == "STDiT2":
             image_size = cfg.image_size
-            height = torch.tensor([image_size[0]], device=device, dtype=dtype).repeat(
-                cfg.batch_size
-            )
-            width = torch.tensor([image_size[1]], device=device, dtype=dtype).repeat(
-                cfg.batch_size
-            )
-            num_frames = torch.tensor(
-                [cfg.num_frames], device=device, dtype=dtype
-            ).repeat(cfg.batch_size)
-            ar = torch.tensor(
-                [image_size[0] / image_size[1]], device=device, dtype=dtype
-            ).repeat(cfg.batch_size)
+            height = torch.tensor([image_size[0]], device=device, dtype=dtype).repeat(cfg.batch_size)
+            width = torch.tensor([image_size[1]], device=device, dtype=dtype).repeat(cfg.batch_size)
+            num_frames = torch.tensor([cfg.num_frames], device=device, dtype=dtype).repeat(cfg.batch_size)
+            ar = torch.tensor([image_size[0] / image_size[1]], device=device, dtype=dtype).repeat(cfg.batch_size)
             if cfg.num_frames == 1:
                 cfg.fps = IMG_FPS
-            fps = torch.tensor([cfg.fps], device=device, dtype=dtype).repeat(
-                cfg.batch_size
-            )
+            fps = torch.tensor([cfg.fps], device=device, dtype=dtype).repeat(cfg.batch_size)
             model_args["height"] = height
             model_args["width"] = width
             model_args["num_frames"] = num_frames
@@ -364,8 +322,6 @@ class OpensoraPipe:
                     save_path = os.path.join(self.save_dir, f"{sample_name_suffix}")
                     if cfg.num_sample != 1:
                         save_path = f"{save_path}-{k}"
-                    save_sample(
-                        sample, fps=cfg.fps // cfg.frame_interval, save_path=save_path
-                    )
+                    save_sample(sample, fps=cfg.fps // cfg.frame_interval, save_path=save_path)
                     sample_idx += 1
         return sample.transpose(0, 1).float().cpu().numpy()  # C, T, H, W

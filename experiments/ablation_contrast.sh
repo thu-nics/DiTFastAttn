@@ -1,0 +1,5 @@
+CUDA_VISIBLE_DEVICES=0 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.1 --eval_n_images 5000 --ablation "full_attn+cfg_attn_share" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=1 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.025 --eval_n_images 5000 --ablation "full_attn+cfg_attn_share" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=2 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.05 --eval_n_images 5000 --ablation "full_attn+cfg_attn_share" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=3 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 0.5 --eval_n_images 5000 --ablation "full_attn+cfg_attn_share" --eval_real_image_path "data/real_images" --use_cache &
+CUDA_VISIBLE_DEVICES=4 python run_dit.py --n_calib 8 --n_steps 20 --window_size 128 --threshold 1 --eval_n_images 5000 --ablation "full_attn+cfg_attn_share" --eval_real_image_path "data/real_images" --use_cache &
