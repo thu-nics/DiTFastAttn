@@ -39,7 +39,7 @@ def main():
             n_calib=args.n_calib,
             calib_x=calib_x,
             threshold=args.threshold,
-            window_size=[-args.window_size, args.window_size],
+            window_size=[args.window_size, args.window_size],
             use_cache=args.use_cache,
             seed=3,
             sequential_calib=args.sequential_calib,

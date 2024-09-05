@@ -130,7 +130,7 @@ def main():
             n_calib=cfg.n_calib,
             calib_x=prompts[: cfg.n_calib],
             threshold=cfg.threshold,
-            window_size=[-cfg.window_size, cfg.window_size],
+            window_size=[cfg.window_size, cfg.window_size],
             use_cache=cfg.use_cache,
             seed=3,
             sequential_calib=cfg.sequential_calib,
