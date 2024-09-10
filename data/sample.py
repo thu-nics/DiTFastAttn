@@ -27,7 +27,7 @@ text_encoder = dict(
 )
 scheduler = dict(
     type="iddpm",
-    num_sampling_steps=200,
+    num_sampling_steps=100,
     cfg_scale=7.0,
     cfg_channel=3,  # or None
 )
@@ -39,5 +39,5 @@ prompt = None  # ["A vibrant scene of a snowy mountain landscape. The sky is fil
 
 # Others
 batch_size = 1
-seed = 3
+seed = 42
 save_dir = "./output/opensora/"
