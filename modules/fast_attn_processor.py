@@ -120,11 +120,11 @@ class FastAttnProcessor:
                 if self.need_compute_residual[m.stepi]:
                     # Compute the full-window attention residual
                     w_hidden_states = flash_attn.flash_attn_func(query, key, value, window_size=self.window_size)
-                    residual = all_hidden_states - w_hidden_states
+                    w_residual = all_hidden_states - w_hidden_states
                     if "cfg_attn_share" in method:
-                        residual = torch.cat([residual, residual], dim=0)
+                        w_residual = torch.cat([w_residual, w_residual], dim=0)
                     # Save the residual for usage in follow-up steps
-                    m.cached_residual = residual
+                    m.cached_residual = w_residual
                 hidden_states = all_hidden_states
             elif "residual_window_attn" in method:
                 w_hidden_states = flash_attn.flash_attn_func(query, key, value, window_size=self.window_size)
