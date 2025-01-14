@@ -39,6 +39,7 @@ class FastAttnProcessor:
         return need_compute_residual
 
     def run_forward_method(self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method):
+        breakpoint()
         residual = hidden_states
         if method == "output_share":
             hidden_states = m.cached_output
@@ -216,6 +217,7 @@ class FastAttnProcessor:
         return x
 
     def run_opensora_forward_method(self, m, hidden_states, encoder_hidden_states, attention_mask, temb, method):
+
         if method == "output_share":
             x = m.cached_output
         else:

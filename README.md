@@ -12,7 +12,7 @@ To tackle these redundancies, we propose three techniques:
 2. Temporal Similarity Reduction to exploit the similarity between steps.
 3. Conditional Redundancy Elimination to skip redundant computations during conditional generation.
 
-Please read our [paper](https://arxiv.org/pdf/2406.08552) for more detailed information.
+Please read our [paper](https://openreview.net/pdf?id=51HQpkQy3t) for more detailed information.
 
 ![compress plan](assets/compression_plan_curr.png)
 
@@ -65,11 +65,12 @@ Check CHANGELOGS.md for updates
 # Citation
 
 ```
-@misc{yuan2024ditfastattn,
-      title={DiTFastAttn: Attention Compression for Diffusion Transformer Models}, 
-      author={Zhihang Yuan and Pu Lu and Hanling Zhang and Xuefei Ning and Linfeng Zhang and Tianchen Zhao and Shengen Yan and Guohao Dai and Yu Wang},
+@inproceedings{
+      yuan2024ditfastattn,
+      title={Di{TF}astAttn: Attention Compression for Diffusion Transformer Models},
+      author={Zhihang Yuan and Hanling Zhang and Lu Pu and Xuefei Ning and Linfeng Zhang and Tianchen Zhao and Shengen Yan and Guohao Dai and Yu Wang},
+      booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
       year={2024},
-      eprint={2406.08552},
-      archivePrefix={arXiv},
+      url={https://openreview.net/forum?id=51HQpkQy3t}
 }
 ```

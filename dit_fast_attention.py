@@ -21,7 +21,6 @@ def set_stepi_warp(pipe):
                 layer.stepi = 0
                 layer.cached_residual = None
                 layer.cached_output = None
-
         out = pipe(*args, **kwargs)
 
         for blocki, block in enumerate(pipe.transformer.transformer_blocks):
@@ -59,7 +58,7 @@ def compression_loss(a, b, metric=""):
     return l
 
 
-def transformer_forward_pre_hook(m: Transformer2DModel, args, kwargs):
+def transformer_forward_pre_hook(m, args, kwargs):
     now_stepi = m.transformer_blocks[0].attn1.stepi
     for blocki, block in enumerate(m.transformer_blocks):
         # Set `need_compute_residual` to False to avoid the process of trying different
@@ -138,7 +137,7 @@ def transform_model_fast_attention(
 ):
     pipe = set_stepi_warp(raw_pipe)
     blocks = pipe.transformer.transformer_blocks
-    transformer: Transformer2DModel = pipe.transformer
+    transformer = pipe.transformer
     # is_transform_attn2=blocks[0].attn2 is not None
     is_transform_attn2 = False
     print(f"Transform attn2 {is_transform_attn2}")
@@ -200,6 +199,12 @@ def transform_model_fast_attention(
         print(isinstance(transformer, Transformer2DModel))
         transformer.metric = metric
         h = transformer.register_forward_pre_hook(transformer_forward_pre_hook, with_kwargs=True)
+        ##########
+        def test_hook(m, input, output):
+        # output[0].register_hook()
+            print("forward done ------- -------")
+        ##########
+        h_test = transformer.register_forward_hook(test_hook)
         transformer.loss_thresholds = loss_thresholds
         transformer.pipe = pipe
         transformer.debug = debug
@@ -226,6 +231,7 @@ def transform_model_fast_attention(
             )
 
         h.remove()
+        h_test.remove()
 
         blocks_methods = []
         for blocki, block in enumerate(blocks):

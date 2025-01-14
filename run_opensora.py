@@ -1,5 +1,6 @@
 from diffusers import DiTPipeline, DPMSolverMultistepScheduler
 import torch
+from torch import nn
 import argparse
 from evaluation import (
     evaluate_quantitative_scores,
@@ -24,7 +25,9 @@ from mmengine.runner import set_random_seed
 from opensora.acceleration.parallel_states import set_sequence_parallel_group
 from opensora.datasets import IMG_FPS, save_sample
 from opensora.models.text_encoder.t5 import text_preprocessing
-from opensora.registry import MODELS, SCHEDULERS, build_module
+# from opensora.registry import MODELS, SCHEDULERS, build_module
+from opensora.registry import MODELS, build_module
+from opensora_misc.registry import build_scheduler, MODIFIEDSCHEDULERS
 from opensora.utils.config_utils import parse_configs
 from opensora.utils.misc import to_torch_dtype
 from mmengine.config import Config
@@ -69,7 +72,8 @@ def main():
     input_size = (cfg.num_frames, *cfg.image_size)
     vae = build_module(cfg.vae, MODELS)
     latent_size = vae.get_latent_size(input_size)
-    text_encoder = build_module(cfg.text_encoder, MODELS, device="cpu")  # T5 must be fp32
+    # text_encoder = build_module(cfg.text_encoder, MODELS, device="cpu")  # T5 must be fp32
+    text_encoder = build_module(cfg.text_encoder, MODELS, device=device)  # T5 must be fp32
 
     model = build_module(
         cfg.model,
@@ -80,14 +84,17 @@ def main():
         model_max_length=text_encoder.model_max_length,
         enable_sequence_parallelism=enable_sequence_parallelism,
     )
+
     text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
 
     # 3.2. move to device & eval
     vae = vae.to(device, dtype).eval()
     model = model.to(device, dtype).eval()
 
+    breakpoint()
     # 3.3. build scheduler
-    scheduler = build_module(cfg.scheduler, SCHEDULERS)
+    # scheduler = build_module(cfg.scheduler, SCHEDULERS)
+    scheduler = build_scheduler(cfg.scheduler, MODIFIEDSCHEDULERS)
 
     save_dir = cfg.save_dir
 
@@ -137,6 +144,7 @@ def main():
             debug=cfg.debug,
             cond_first=True,
         )
+    
 
     cfg.batch_size = 1
     macs, attn_mac = opensora_calculate_flops(pipe, prompts[:1])
